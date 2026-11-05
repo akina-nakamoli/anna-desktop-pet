@@ -24,3 +24,4 @@ engine-process.json
 /GPT-SoVITS*/
 **/logs/
 !reference/anna.wav
+releases/
