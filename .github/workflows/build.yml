@@ -1,0 +1,14 @@
+name: Build preview
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build both variants and check publish files
+        shell: powershell
+        run: .\tools\Check-Release.ps1
