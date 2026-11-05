@@ -78,6 +78,13 @@ if ($LASTEXITCODE -ne 0) { throw "Compiler failed: $LASTEXITCODE" }
 $sourceAssets = Join-Path $PSScriptRoot 'assets'
 $destAssets = Join-Path $Destination 'assets'
 New-Item -ItemType Directory -Force -Path $destAssets | Out-Null
+
+# Include the complete outfit packs in binary releases. These are required by
+# the in-app outfit selector and must remain alongside the executable.
+$sourceOutfits = Join-Path (Split-Path $PSScriptRoot -Parent) 'outfits'
+if (Test-Path -LiteralPath $sourceOutfits) {
+    Copy-Item -LiteralPath $sourceOutfits -Destination (Join-Path $Destination 'outfits') -Recurse -Force
+}
 if (Test-Path -LiteralPath (Join-Path $sourceAssets 'pet.png')) { Copy-Item -LiteralPath (Join-Path $sourceAssets 'pet.png') -Destination (Join-Path $destAssets 'pet.png') -Force }
 if (Test-Path -LiteralPath $poseAsset) { Copy-Item -LiteralPath $poseAsset -Destination (Join-Path $destAssets 'poses.png') -Force }
 if (Test-Path -LiteralPath $chatBackground) { Copy-Item -LiteralPath $chatBackground -Destination (Join-Path $destAssets 'chat-background.png') -Force }
