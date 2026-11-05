@@ -2,6 +2,10 @@
 
 Windows 桌面宠物实验项目，提供 GPT 与 DeepSeek 两种对话构建、可选的本地日语配音、中文语音输入，以及本地音乐和 QQ 音乐控制。仓库包含作者使用的动漫人物素材和参考音频；项目与原作及配音演员无官方关联。素材使用边界见 [ASSETS.md](ASSETS.md)。
 
+## 直接运行（推荐）
+
+从 GitHub 的 **Releases** 下载对应的免编译 ZIP，解压后双击其中的 `桌宠/AnnaDesktopPet.exe`。GPT 版和 DeepSeek 版请选择一个运行，不要同时启动。首次使用时在设置中填写自己的 API Key，切勿把 API Key 上传到 GitHub。
+
 ## 构建
 
 需要 Windows、.NET Framework 4.8 及其 C# 编译器。于 PowerShell 运行：
@@ -27,4 +31,4 @@ API Key 选择“记住”后使用 Windows 当前用户的数据保护机制保
 
 ## 素材与许可
 
-代码按 [MIT](LICENSE) 许可证提供；人物、图片、音频等素材不随代码许可证授权。素材边界见 [ASSETS.md](ASSETS.md)。完整安装包和自动更新尚未完成，当前为源码预览版。
+代码按 [MIT](LICENSE) 许可证提供；人物、图片、音频等素材不随代码许可证授权。素材边界见 [ASSETS.md](ASSETS.md)。维护者可运行 `./tools/Package-Release.ps1` 生成两个免编译 ZIP。
