@@ -96,8 +96,7 @@ namespace AnnaDesktopPet
             blinkFrames = LoadSequence("animation-blink.png", "AnnaDesktopPet.animation-blink.png", baseFrame);
             speechFrames = LoadSequence("animation-speak.png", "AnnaDesktopPet.animation-speak.png", baseFrame);
             happyFrames = LoadSequence("animation-happy.png", "AnnaDesktopPet.animation-happy.png", baseFrame);
-            walkFrames = LoadSequence("animation-walk8.png", "AnnaDesktopPet.animation-walk8.png", baseFrame, 4, 2);
-            if (walkFrames == null) walkFrames = LoadSequence("animation-walk.png", "AnnaDesktopPet.animation-walk.png", baseFrame);
+            walkFrames = null;
             if (waveFrames != null || blinkFrames != null || speechFrames != null) Status += "；连续动作已就绪";
             LoadOutfitPack(baseFrame);
         }

@@ -65,7 +65,7 @@ $poseAsset = Join-Path $PSScriptRoot 'assets\poses.png'
 if (Test-Path -LiteralPath $poseAsset) { $petResources += "/resource:$poseAsset,AnnaDesktopPet.poses.png" }
 $chatBackground = Join-Path $PSScriptRoot 'assets\chat-background.png'
 if (Test-Path -LiteralPath $chatBackground) { $petResources += "/resource:$chatBackground,AnnaDesktopPet.chat-background.png" }
-foreach ($animation in @('animation-wave.png','animation-blink.png','animation-speak.png','animation-happy.png','animation-walk.png','animation-walk8.png')) {
+foreach ($animation in @('animation-wave.png','animation-blink.png','animation-speak.png','animation-happy.png')) {
     $asset = Join-Path $PSScriptRoot ('assets\' + $animation)
     if (Test-Path -LiteralPath $asset) { $petResources += "/resource:$asset,AnnaDesktopPet.$animation" }
 }
@@ -83,7 +83,7 @@ if (Test-Path -LiteralPath $poseAsset) { Copy-Item -LiteralPath $poseAsset -Dest
 if (Test-Path -LiteralPath $chatBackground) { Copy-Item -LiteralPath $chatBackground -Destination (Join-Path $destAssets 'chat-background.png') -Force }
 $dressingRoom = Join-Path $sourceAssets 'dressing-room.png'
 if (Test-Path -LiteralPath $dressingRoom) { Copy-Item -LiteralPath $dressingRoom -Destination (Join-Path $destAssets 'dressing-room.png') -Force }
-foreach ($animation in @('animation-wave.png','animation-blink.png','animation-speak.png','animation-happy.png','animation-walk.png','animation-walk8.png')) {
+foreach ($animation in @('animation-wave.png','animation-blink.png','animation-speak.png','animation-happy.png')) {
     $asset = Join-Path $sourceAssets $animation
     if (Test-Path -LiteralPath $asset) { Copy-Item -LiteralPath $asset -Destination (Join-Path $destAssets $animation) -Force }
 }
