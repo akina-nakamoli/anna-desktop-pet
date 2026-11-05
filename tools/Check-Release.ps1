@@ -2,7 +2,6 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $repo
 try {
-    & (Join-Path $PSScriptRoot 'GenerateDemoAssets.ps1')
     & (Join-Path $repo 'source\build.ps1') -Destination (Join-Path $repo 'build\GPT')
     if ($LASTEXITCODE -ne 0) { throw 'GPT build failed.' }
     & (Join-Path $repo 'source\build.ps1') -Destination (Join-Path $repo 'build\DeepSeek') -DeepSeek
