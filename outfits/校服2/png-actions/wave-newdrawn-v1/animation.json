@@ -1,0 +1,69 @@
+﻿{
+    "frames":  [
+                   {
+                       "durationMs":  180,
+                       "file":  "frame000.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame001.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame002.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame003.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame004.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame005.png"
+                   },
+                   {
+                       "durationMs":  90,
+                       "file":  "frame006.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame007.png"
+                   },
+                   {
+                       "durationMs":  100,
+                       "file":  "frame008.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame009.png"
+                   },
+                   {
+                       "durationMs":  90,
+                       "file":  "frame010.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame011.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame012.png"
+                   },
+                   {
+                       "durationMs":  70,
+                       "file":  "frame013.png"
+                   },
+                   {
+                       "durationMs":  180,
+                       "file":  "frame014.png"
+                   }
+               ],
+    "canvasHeight":  1536,
+    "source":  "new-drawn-draft",
+    "loop":  false,
+    "canvasWidth":  1024,
+    "formatVersion":  1
+}

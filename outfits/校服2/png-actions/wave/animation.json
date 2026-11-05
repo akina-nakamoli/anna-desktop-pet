@@ -1,0 +1,633 @@
+﻿{
+    "frames":  [
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0000.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0001.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0002.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0003.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0004.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0005.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0006.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0007.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0008.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0009.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0010.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0011.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0012.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0013.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0014.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0015.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0016.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0017.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0018.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0019.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0020.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0021.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0022.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0023.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0024.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0025.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0026.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0027.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0028.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0029.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0030.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0031.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0032.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0033.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0034.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0035.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0036.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0037.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0038.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0039.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0040.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0041.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0042.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0043.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0044.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0045.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0046.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0047.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0048.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0049.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0050.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0051.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0052.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0053.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0054.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0055.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0056.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0057.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0058.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0059.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0060.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0061.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0062.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0063.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0064.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0065.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0066.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0067.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0068.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0069.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0070.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0071.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0072.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0073.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0074.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0075.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0076.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0077.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0078.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0079.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0080.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0081.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0082.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0083.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0084.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0085.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0086.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0087.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0088.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0089.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0090.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0091.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0092.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0093.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0094.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0095.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0096.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0097.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0098.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0099.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0100.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0101.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0102.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0103.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0104.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0105.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0106.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0107.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0108.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0109.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0110.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0111.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0112.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0113.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0114.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0115.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0116.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0117.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0118.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0119.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0120.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0121.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0122.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0123.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0124.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0125.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0126.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0127.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0128.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0129.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0130.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0131.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0132.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0133.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0134.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0135.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0136.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0137.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0138.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0139.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0140.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0141.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0142.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0143.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0144.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0145.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0146.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0147.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0148.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0149.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0150.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0151.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0152.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0153.png"
+                   },
+                   {
+                       "durationMs":  16,
+                       "file":  "frame0154.png"
+                   },
+                   {
+                       "durationMs":  17,
+                       "file":  "frame0155.png"
+                   }
+               ],
+    "canvasHeight":  1536,
+    "source":  "legacy-render-test",
+    "loop":  false,
+    "canvasWidth":  1024,
+    "formatVersion":  1
+}

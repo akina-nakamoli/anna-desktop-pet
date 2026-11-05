@@ -1,0 +1,169 @@
+﻿{
+    "frames":  [
+                   {
+                       "durationMs":  120,
+                       "file":  "frame000.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame001.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame002.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame003.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame004.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame005.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame006.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame007.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame008.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame009.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame010.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame011.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame012.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame013.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame014.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame015.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame016.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame017.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame018.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame019.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame020.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame021.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame022.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame023.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame024.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame015.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame014.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame013.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame012.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame011.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame010.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame009.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame007.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame006.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame005.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame004.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame003.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame002.png"
+                   },
+                   {
+                       "durationMs":  40,
+                       "file":  "frame001.png"
+                   },
+                   {
+                       "durationMs":  120,
+                       "file":  "frame000.png"
+                   }
+               ],
+    "canvasHeight":  1536,
+    "source":  "new-drawn-dense-draft",
+    "loop":  false,
+    "canvasWidth":  1024,
+    "formatVersion":  1
+}

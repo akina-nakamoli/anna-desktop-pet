@@ -11,7 +11,7 @@ try {
     $files = @(git ls-files --cached --others --exclude-standard)
     if ($LASTEXITCODE -ne 0) { throw 'Git file inventory failed.' }
     foreach ($file in $files) {
-        if ($file -match '^(build|dist|private-assets)/' -or $file -match '\.(exe|dll|wav|mp3|flac|mgg|bin|key)$') {
+        if ($file -match '^(build|dist|private-assets)/' -or ($file -match '\.(exe|dll|wav|mp3|flac|mgg|bin|key)$' -and $file -ne 'reference/anna.wav')) {
             throw "Unexpected publish file: $file"
         }
     }

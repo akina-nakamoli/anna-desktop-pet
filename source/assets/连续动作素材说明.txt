@@ -1,0 +1,15 @@
+连续动作素材说明
+
+使用 Codex 内置 imagegen 工具制作透明背景的四帧横排素材。
+参考：同目录 pet.png（人物立绘）、animation-wave.png（布局）。
+animation-blink.png：人物全身站位一致，眼睛睁开、半闭、闭合、睁开。
+animation-speak.png：人物全身站位一致，嘴部闭合、微张、张开、闭合。
+约束：原人物发型、校服、动漫正常比例保持一致；四帧均为完整人物、脚部位置对齐、无网格或文字。
+
+animation-happy.png：使用 Codex imagegen 基于 pet.png 与 animation-wave.png 制作，四帧开心抬手动作，透明背景、动漫比例。
+
+v1.12 animation-happy.png：使用 Codex imagegen 以 pet.png、原动作图为参考生成微笑双手比耶的四帧素材。
+
+v1.14 animation-walk.png：用 Codex imagegen 参考 pet.png 与原动作素材制作的四帧透明走路图。
+
+v1.15 animation-walk8.png：以 pet.png 和 animation-walk.png 为参考，由 Codex imagegen 生成八帧走路图；两行在 y=523 切分，按照降低相邻轮廓变化的顺序循环。
