@@ -55,11 +55,95 @@ class TestMusic
             Check(Run(router.Handle("播放第2首")).Contains("请先"), "QQ新搜索不得沿用本地候选");
             Check(MusicRouter.MatchScore("周杰伦-晴天.mp3", "林俊杰的晴天") == 0, "不得匹配错误歌手");
             Check(MusicRouter.MatchScore("光.mp3", "光") > 0, "单字歌名未匹配");
+            VerifyModelExecution();
             Console.WriteLine("PASS: local shorthand/copy selection, conversation and cancellation boundaries, no unintended QQ calls");
             return 0;
         }
         finally {
             router.Dispose(); File.Delete(a); File.Delete(b); Directory.Delete(root);
         }
+    }
+
+    static void VerifyModelExecution()
+    {
+        string query = null, played = null;
+        int searches = 0;
+        var tracks = new List<QqTrack> {
+            new QqTrack { Id = "123", Title = "夜に駆ける", Artist = "YOASOBI", Album = "THE BOOK", Type = 0 },
+            new QqTrack { Id = "124", Title = "夜に駆ける", Artist = "Other", Album = "Cover", Type = 0 }
+        };
+        var router = new MusicRouter(delegate(string s) {}, null, new string[0],
+            delegate(string q, CancellationToken token) { query = q; searches++; return Task.FromResult(tracks); },
+            delegate(QqTrack track, CancellationToken token) { played = track.Id; return Task.FromResult(0); });
+        try
+        {
+            MusicCandidateSnapshot empty = router.CaptureCandidates();
+            Check(empty.Candidates.Count == 0, "无候选时快照必须为空");
+            string result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "夜に駆ける" }, empty, CancellationToken.None));
+            Check(query == "夜に駆ける" && played == null && result.Contains("第一首"), "结构化搜索应保留歌名并展示候选");
+            MusicCandidateSnapshot first = router.CaptureCandidates();
+            Check(first.Candidates.Count == 2 && first.Candidates[0].Contains("YOASOBI"), "模型应收到完整候选标签");
+            first.Candidates.Clear();
+            Check(router.CaptureCandidates().Candidates.Count == 2, "快照必须与内部候选列表隔离");
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "choose", Choice = 2 }, first, CancellationToken.None));
+            Check(played == "124" && searches == 1 && result.Contains("发送播放请求"), "结构化选择应投递所选曲目且不能重新搜索");
+            played = null;
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "choose", Choice = 2 }, first, CancellationToken.None));
+            Check(played == null && result.Contains("失效"), "已消费的候选快照不能重复播放");
+
+            Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "夜に駆ける" }, empty, CancellationToken.None));
+            MusicCandidateSnapshot old = router.CaptureCandidates();
+            Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "别的歌曲" }, old, CancellationToken.None));
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "choose", Choice = 1 }, old, CancellationToken.None));
+            Check(played == null && result.Contains("失效"), "新搜索后旧快照不能选择新列表中同编号的歌曲");
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "choose", Choice = 9 }, router.CaptureCandidates(), CancellationToken.None));
+            Check(played == null && result.Contains("只有 2"), "结构化选择应拒绝越界编号");
+            MusicCandidateSnapshot canceledList = router.CaptureCandidates();
+            router.CancelPending();
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "choose", Choice = 1 }, canceledList, CancellationToken.None));
+            Check(played == null && result.Contains("失效"), "取消后模型不能恢复过期候选");
+
+            Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "放不下" }, empty, CancellationToken.None));
+            Check(query == "放不下", "结构化歌名不可再被当成播放命令解析");
+            Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "好吗" }, empty, CancellationToken.None));
+            Check(query == "好吗", "结构化歌名结尾不可再被删除");
+            query = null;
+            result = Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "歌曲 我的手机号13800138000" }, empty, CancellationToken.None));
+            Check(query == null && result.Contains("个人信息"), "结构化查询仍必须经过隐私校验");
+
+            int count = searches;
+            foreach (MusicIntent bad in new[] { new MusicIntent { Intent = "chat" }, new MusicIntent { Intent = "delete" }, new MusicIntent { Intent = "control", Command = "powershell" } })
+            {
+                bool rejected = false;
+                try { Run(router.ExecuteIntentAsync(bad, empty, CancellationToken.None)); } catch (InvalidOperationException) { rejected = true; }
+                Check(rejected && searches == count && played == null, "未知或非音乐意图不能执行操作");
+            }
+            using (var cts = new CancellationTokenSource())
+            {
+                cts.Cancel();
+                bool canceled = false;
+                try { Run(router.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "夜に駆ける" }, empty, cts.Token)); } catch (OperationCanceledException) { canceled = true; }
+                Check(canceled && searches == count && played == null, "预先取消的模型决定不得查曲库或播放");
+            }
+        }
+        finally { router.Dispose(); }
+
+        var deferred = new TaskCompletionSource<List<QqTrack>>();
+        var pendingRouter = new MusicRouter(delegate(string s) {}, null, new string[0],
+            delegate(string q, CancellationToken token) { return deferred.Task; },
+            delegate(QqTrack track, CancellationToken token) { played = track.Id; return Task.FromResult(0); });
+        try
+        {
+            using (var cts = new CancellationTokenSource())
+            {
+                Task<string> pending = pendingRouter.ExecuteIntentAsync(new MusicIntent { Intent = "play", Query = "YOASOBI 夜に駆ける" }, pendingRouter.CaptureCandidates(), cts.Token);
+                cts.Cancel(); deferred.SetResult(tracks);
+                bool canceled = false;
+                try { Run(pending); } catch (OperationCanceledException) { canceled = true; }
+                Check(canceled && played == null && pendingRouter.CaptureCandidates().Candidates.Count == 0, "搜索中途取消后不得投递或存入候选");
+            }
+        }
+        finally { pendingRouter.Dispose(); }
+        Console.WriteLine("PASS: structured music intents, versioned selections, query preservation, cancellation and execution allowlist");
     }
 }

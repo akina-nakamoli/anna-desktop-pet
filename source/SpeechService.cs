@@ -38,6 +38,10 @@ namespace AnnaDesktopPet
         private MediaPlayer clonePlayer;
         private DispatcherTimer playbackWatchdog;
         private string cloneWaveFile;
+        private SpeechStreamQueue streamQueue;
+        private TaskCompletionSource<bool> streamPromptCompletion;
+        private int streamCharacters;
+        private bool streamShortened;
         private bool UsingClone { get { return engine == "gpt-sovits"; } }
 
         public event Action<bool> SpeakingChanged;
@@ -58,7 +62,7 @@ namespace AnnaDesktopPet
         public IList<SpeechVoiceInfo> Voices { get { EnsureInitialized(); return voices.AsReadOnly(); } }
         public bool Available { get { if (!UsingClone) EnsureInitialized(); return (UsingClone ? cloneConfigured : available) && !disposed; } }
         public bool IsSpeaking { get { return speaking && !disposed; } }
-        public bool IsBusy { get { return !disposed && (speaking || activePrompt != null || clonePending); } }
+        public bool IsBusy { get { return !disposed && (speaking || activePrompt != null || clonePending || streamQueue != null); } }
         internal long OperationId { get { return cloneSequence; } }
         public string SelectedVoiceId { get { EnsureInitialized(); return selectedVoiceId; } }
         public string Status { get { if (!UsingClone) EnsureInitialized(); return status; } }
@@ -198,12 +202,94 @@ namespace AnnaDesktopPet
 
         public void Stop() { Dispatch(delegate { StopCore(true); }); }
 
+        // One stream belongs to one model reply. Appending never interrupts an earlier sentence.
+        public void BeginStream()
+        {
+            Dispatch(delegate
+            {
+                StopCore(false);
+                if (UsingClone)
+                {
+                    if (!cloneConfigured) { SetStatus("参考音色配置尚未完成，请检查本地服务地址、WAV 样音与日语台词。"); return; }
+                }
+                else { EnsureInitialized(); if (!available || synthesizer == null) return; }
+                long sequence = cloneSequence;
+                bool localClone = UsingClone;
+                string endpoint = cloneEndpoint, referenceAudio = cloneReferenceAudio, referenceText = cloneReferenceText;
+                int speechRate = rate;
+                streamCharacters = 0; streamShortened = false;
+                SpeechStreamQueue queue = null;
+                queue = new SpeechStreamQueue(
+                    delegate(string sentence, CancellationToken token)
+                    {
+                        return localClone
+                            ? PlayStreamCloneAsync(sequence, endpoint, referenceAudio, referenceText, speechRate, sentence, token)
+                            : PlayStreamWindowsAsync(sequence, sentence, token);
+                    },
+                    delegate(Exception error)
+                    {
+                        Dispatch(delegate
+                        {
+                            if (sequence != cloneSequence || !Object.ReferenceEquals(streamQueue, queue)) return;
+                            streamQueue = null; clonePending = false; SetSpeaking(false);
+                            if (error != null)
+                            {
+                                if (localClone) cloneConnected = false;
+                                SetStatus(error is InvalidOperationException ? error.Message : "分句配音未能完成，请检查音色服务或音频设备。");
+                            }
+                            else
+                            {
+                                if (localClone && streamCharacters > 0) cloneConnected = true;
+                                SetStatus(streamShortened ? "本次已配音前 1500 字；完整内容请看聊天窗口。" : testWaveFile != null && streamCharacters > 0 ? "分句配音已生成到测试文件，未播放。" : ReadyStatus());
+                            }
+                        });
+                    });
+                streamQueue = queue;
+                SetStatus("等待日语句子，生成一句就开始配音。");
+            });
+        }
+
+        public void AppendStream(string sentence)
+        {
+            Dispatch(delegate
+            {
+                if (streamQueue == null) return;
+                bool shortened;
+                string clean = PrepareText(sentence, out shortened);
+                if (clean.Length == 0) return;
+                int remaining = 1500 - streamCharacters;
+                if (remaining <= 0) { streamShortened = true; return; }
+                if (clean.Length > remaining)
+                {
+                    int take = remaining;
+                    if (take > 0 && Char.IsHighSurrogate(clean[take - 1])) take--;
+                    clean = clean.Substring(0, take).TrimEnd(); shortened = true;
+                }
+                if (clean.Length == 0) return;
+                if (streamQueue.Append(clean))
+                {
+                    streamCharacters += clean.Length; streamShortened |= shortened;
+                    if (UsingClone) clonePending = true;
+                    if (!speaking) SetStatus(UsingClone ? "正在生成这一句日语参考音色……" : "正在准备这一句日语配音……");
+                }
+            });
+        }
+
+        public void CompleteStream()
+        {
+            Dispatch(delegate { if (streamQueue != null) streamQueue.Complete(); });
+        }
+
         private void StopCore(bool showStatus)
         {
             // Clear identity before cancelling: a late completion must not stop the next utterance.
+            SpeechStreamQueue oldQueue = streamQueue; streamQueue = null;
+            TaskCompletionSource<bool> oldCompletion = streamPromptCompletion; streamPromptCompletion = null;
             activePrompt = null;
             clonePending = false;
             cloneSequence++;
+            if (oldQueue != null) oldQueue.Stop();
+            if (oldCompletion != null) oldCompletion.TrySetCanceled();
             if (cloneCancellation != null) { cloneCancellation.Cancel(); cloneCancellation.Dispose(); cloneCancellation = null; }
             ReleaseClonePlayer();
             if (synthesizer != null)
@@ -212,6 +298,46 @@ namespace AnnaDesktopPet
             }
             SetSpeaking(false);
             if (showStatus && (UsingClone ? cloneConfigured : available)) SetStatus("已停止配音与等待中的音色请求。");
+        }
+
+        private async Task PlayStreamCloneAsync(long sequence, string endpoint, string referenceAudio, string referenceText,
+            int speechRate, string sentence, CancellationToken token)
+        {
+            IList<string> chunks = SplitSpeech(sentence);
+            token.ThrowIfCancellationRequested();
+            Task<byte[]> next = cloneClient.GenerateAsync(endpoint, referenceAudio, referenceText, chunks[0], speechRate, token);
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                byte[] wave = await next.ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                next = i + 1 < chunks.Count ? cloneClient.GenerateAsync(endpoint, referenceAudio, referenceText, chunks[i + 1], speechRate, token) : null;
+                if (next != null) ObservePrefetchFault(next);
+                if (testWaveFile != null) { if (i == 0) File.WriteAllBytes(testWaveFile, wave); continue; }
+                string temp = Path.Combine(Path.GetTempPath(), "AnnaVoice-" + Guid.NewGuid().ToString("N") + ".wav");
+                File.WriteAllBytes(temp, wave);
+                await QueueClonePlayback(sequence, temp, token).ConfigureAwait(false);
+            }
+        }
+
+        private async Task PlayStreamWindowsAsync(long sequence, string sentence, CancellationToken token)
+        {
+            TaskCompletionSource<bool> completed = new TaskCompletionSource<bool>();
+            using (token.Register(delegate { completed.TrySetCanceled(); }))
+            {
+                token.ThrowIfCancellationRequested();
+                if (disposed || dispatcher.HasShutdownStarted) throw new OperationCanceledException(token);
+                DispatcherOperation pending = dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (disposed || sequence != cloneSequence || token.IsCancellationRequested) { completed.TrySetCanceled(); return; }
+                    if (synthesizer == null) { completed.TrySetException(new InvalidOperationException("本机日语配音不可用。")); return; }
+                    Prompt prompt = new Prompt(sentence); activePrompt = prompt; streamPromptCompletion = completed;
+                    try { SetStatus("正在逐句使用 Windows 本机日语配音。"); synthesizer.SpeakAsync(prompt); }
+                    catch { activePrompt = null; streamPromptCompletion = null; completed.TrySetException(new InvalidOperationException("本机朗读未能开始，请检查语音组件和音频设备。")); }
+                }));
+                pending.Aborted += delegate { completed.TrySetCanceled(); };
+                if (pending.Status == DispatcherOperationStatus.Aborted) completed.TrySetCanceled();
+                await completed.Task.ConfigureAwait(false);
+            }
         }
 
         private async void StartClone(string text, bool truncated)
@@ -370,7 +496,16 @@ namespace AnnaDesktopPet
             Dispatch(delegate
             {
                 if (!Object.ReferenceEquals(activePrompt, prompt)) return;
-                activePrompt = null; SetSpeaking(false);
+                activePrompt = null;
+                if (streamPromptCompletion != null)
+                {
+                    TaskCompletionSource<bool> completed = streamPromptCompletion; streamPromptCompletion = null;
+                    if (failed) completed.TrySetException(new InvalidOperationException("本机朗读未能完成，请检查语音组件和音频设备。"));
+                    else if (cancelled) completed.TrySetCanceled();
+                    else completed.TrySetResult(true);
+                    return;
+                }
+                SetSpeaking(false);
                 SetStatus(failed ? "本机朗读未能完成，请检查语音组件和音频设备。" : cancelled ? "已停止朗读。" : ReadyStatus());
             });
         }

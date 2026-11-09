@@ -7,7 +7,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Threading;
-using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 using System.Runtime.InteropServices;
 
@@ -134,10 +133,10 @@ namespace AnnaDesktopPet
         }
         private static string ResolvePath()
         {
-            string config=Path.Combine(Program.DataDir,"qqmusic-path.txt");
-            string path=File.Exists(config)?File.ReadAllText(config).Trim():"";
-            if(String.IsNullOrWhiteSpace(path) || !File.Exists(path) ||
-               !String.Equals(Path.GetFileName(path),"QQMusic.exe",StringComparison.OrdinalIgnoreCase))
+            string config = Path.Combine(Program.DataDir, "qqmusic-path.txt");
+            string path = File.Exists(config) ? File.ReadAllText(config).Trim() : "";
+            if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path) || !File.Exists(path) ||
+                !String.Equals(Path.GetFileName(path), "QQMusic.exe", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("未配置 QQ 音乐程序。请先启动 QQ 音乐，或在设置目录的 qqmusic-path.txt 中填写 QQMusic.exe 的完整路径。");
             return Path.GetFullPath(path);
         }

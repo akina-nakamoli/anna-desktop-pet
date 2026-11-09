@@ -16,6 +16,7 @@
 *settings*.json
 *settings*.ini
 engine-path.txt
+python-path.txt
 qqmusic-path.txt
 asr-engine-path.txt
 engine-process.json
@@ -25,3 +26,4 @@ engine-process.json
 **/logs/
 !reference/anna.wav
 releases/
+releases-v2/

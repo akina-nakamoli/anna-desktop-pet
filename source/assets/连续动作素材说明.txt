@@ -10,3 +10,4 @@ animation-happy.png：使用 Codex imagegen 基于 pet.png 与 animation-wave.pn
 
 v1.12 animation-happy.png：使用 Codex imagegen 以 pet.png、原动作图为参考生成微笑双手比耶的四帧素材。
 
+2026-11-09 发布清理：走路动作已停用，四帧和八帧走路图不再随发布版打包。服装高清说话素材独立于走路素材加载；思考姿态、待机立绘和换装衣帽间保留。

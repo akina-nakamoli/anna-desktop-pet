@@ -16,7 +16,7 @@ namespace AnnaDesktopPet {
         [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
         private readonly HwndSource source; private readonly IntPtr handle;
         private readonly Action<string> send,notice;
-        private readonly Func<bool> ready;
+        private readonly Func<bool> ready,canSubmit;
         private readonly DispatcherTimer timer=new DispatcherTimer();
         private SpeechRecognitionEngine recognizer;
         private LocalAsr localRecorder;
@@ -31,8 +31,8 @@ namespace AnnaDesktopPet {
         private DateTime started;
         private bool uncertain;
         private int finishingVersion;
-        internal VoiceChat(Window owner,Action<string> result,Action<string> status,Func<bool> canStart){
-            send=result;notice=status;ready=canStart;handle=new WindowInteropHelper(owner).Handle;source=HwndSource.FromHwnd(handle);
+        internal VoiceChat(Window owner,Action<string> result,Action<string> status,Func<bool> canStart,Func<bool> canSubmit=null){
+            send=result;notice=status;ready=canStart;this.canSubmit=canSubmit ?? canStart;handle=new WindowInteropHelper(owner).Handle;source=HwndSource.FromHwnd(handle);
             VoiceInputSettings.Load();worker.WarmUp();
             callback=MouseMessage;hook=SetWindowsHookEx(14,callback,GetModuleHandle(null),0);
             if(hook==IntPtr.Zero)Program.Log("Voice mouse side-button hook unavailable.");
@@ -51,7 +51,7 @@ namespace AnnaDesktopPet {
             return CallNextHookEx(hook,code,message,data);
         }
         private void Start(){
-            if(disposed || !captured || listening || finishing || !ready())return;
+            if(disposed || !captured || listening || finishing || !canSubmit())return;
             try{localRecorder=new LocalAsr(worker);localRecorder.Start();listening=true;started=DateTime.UtcNow;timer.Start();Level(true);notice("正在听，松开侧键后用本地中文模型识别。");}catch(Exception ex){Cleanup();notice(ex.Message);}return;
         }
         private void LegacyStart(){
@@ -69,8 +69,24 @@ namespace AnnaDesktopPet {
                 recognizer.SetInputToDefaultAudioDevice();listening=true;started=DateTime.UtcNow;recognizer.RecognizeAsync(RecognizeMode.Multiple);timer.Start();notice("正在听，松开鼠标后退侧键发送（最长30秒）。");
             }catch{Cleanup();notice("麦克风不可用，请检查 Windows 麦克风权限和默认录音设备。");}
         }
-        private async void Finish(){timer.Stop();listening=false;finishing=true;int version=++finishingVersion;notice("正在用本地中文模型识别，请稍等……");await System.Threading.Tasks.Task.Delay(400);if(disposed || version!=finishingVersion)return;try{Level(false);string result=await localRecorder.Finish();if(disposed || version!=finishingVersion)return;Cleanup();if(!ready())return;if(result.Length==0)notice("没有识别到说话，请检查选定麦克风。");else if(result.Length<4){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.ReviewVoiceTranscript(result);}else send(result);}catch(Exception ex){if(version!=finishingVersion)return;Cleanup();if(!disposed)notice(ex.Message);}}
-        private void Complete(){string result=text.ToString().Trim();bool review=uncertain || result.Length<4;Cleanup();if(disposed)return;if(result.Length==0)notice("没听清楚，请按住鼠标后退侧键再说一次。");else if(ready()){if(review){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.ReviewVoiceTranscript(result);else notice("这次没听清，请重说。");}else send(result);}}
+        private async void Finish(){
+            timer.Stop();listening=false;finishing=true;int version=++finishingVersion;
+            notice("正在用本地中文模型识别，请稍等……");
+            await System.Threading.Tasks.Task.Delay(400);
+            if(disposed || version!=finishingVersion)return;
+            try{
+                Level(false);string result=await localRecorder.Finish();
+                if(disposed || version!=finishingVersion)return;
+                Cleanup();
+                if(result.Length==0){notice("没有识别到说话，请检查选定麦克风。");return;}
+                // Only the initial side-button press may interrupt a response. A newer typed
+                // request or draft can arrive while ASR runs; do not interrupt it at submission.
+                if(!canSubmit())return;
+                if(result.Length<4){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.ReviewVoiceTranscript(result);}
+                else send(result);
+            }catch(Exception ex){if(version!=finishingVersion)return;Cleanup();if(!disposed)notice(ex.Message);}
+        }
+        private void Complete(){string result=text.ToString().Trim();bool review=uncertain || result.Length<4;Cleanup();if(disposed)return;if(result.Length==0)notice("没听清楚，请按住鼠标后退侧键再说一次。");else if(canSubmit()){if(review){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.ReviewVoiceTranscript(result);else notice("这次没听清，请重说。");}else send(result);}}
         private void Cleanup(){timer.Stop();Level(false);listening=finishing=false;if(localRecorder!=null){localRecorder.Dispose();localRecorder=null;}if(recognizer!=null){recognizer.Dispose();recognizer=null;}}
         public void Dispose(){disposed=true;finishingVersion++;if(hook!=IntPtr.Zero)UnhookWindowsHookEx(hook);Cleanup();worker.Dispose();}
     }

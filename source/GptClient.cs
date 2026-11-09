@@ -17,7 +17,9 @@ namespace AnnaDesktopPet
     {
         public string Role;
         public string Content;
-        public ChatMessage(string role, string content) { Role = role; Content = content; }
+        // Null represents legacy records whose original date is unknown, not the current date.
+        public DateTime? CreatedUtc;
+        public ChatMessage(string role, string content) { Role = role; Content = content; CreatedUtc = DateTime.UtcNow; }
     }
 
     internal sealed class GptReply
@@ -25,6 +27,7 @@ namespace AnnaDesktopPet
         public string DisplayText = "";
         public string JapaneseSpeechText = "";
         public string SpeechNotice = "";
+        public string ToolResultText = "";
     }
 
     internal sealed class GptSettings
@@ -129,25 +132,41 @@ namespace AnnaDesktopPet
         }
     }
 
-    internal sealed class GptClient
+    internal sealed partial class GptClient
     {
 #if DEEPSEEK
         private const string Endpoint = "https://api.deepseek.com/chat/completions";
 #else
         private const string Endpoint = "https://api.openai.com/v1/responses";
 #endif
-        private const string Instructions = "你是以《败犬女主太多了！》八奈见杏菜为灵感的同人桌面伙伴，昵称杏菜，由 GPT 提供对话。默认用中文自然交流，活泼、有一点俏皮，喜欢聊美食，也会认真帮助用户。普通闲聊通常用一到三句简短回复；用户请教问题时按需要认真解释。不要机械重复口头禅，不给用户制造陪伴压力，不自称真人或官方角色。你只能看到用户主动输入的文字和当前对话；不能看到屏幕、读取文件、操作软件或执行任何工具。不要声称已经替用户完成你无法执行的事情。";
+        private const string Instructions = "你是以《败犬女主太多了！》八奈见杏菜为灵感的同人桌面伙伴，昵称杏菜，由 GPT 提供对话。默认用中文自然交流，活泼、有一点俏皮，喜欢聊美食，也会认真帮助用户。普通闲聊通常用一到三句简短回复；用户请教问题时按需要认真解释。不要机械重复口头禅，不给用户制造陪伴压力，不自称真人或官方角色。你能参考用户输入、最近对话和桌宠提供的音乐工具结果；不能看到屏幕或随意读取文件。宿主桌宠可以搜索和控制 QQ 音乐，由程序执行。只有工具明确确认正在播放时才能说已经播放；已发送请求不等于播放成功。没有工具结果时不许假称执行成功，也不要笼统说桌宠无法播放音乐。";
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> transport;
         public GptClient() { }
         internal GptClient(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> testTransport) { transport = testTransport; }
+
+        internal static string ConversationRole(string role)
+        {
+            if (role == "user" || role == "local_user") return "user";
+            if (role == "assistant" || role == "local_assistant") return "assistant";
+            return null;
+        }
 
         public async Task<string> SendAsync(GptSettings settings, IList<ChatMessage> history, string userText, CancellationToken cancellation)
         {
             return (await SendCoreAsync(settings, history, userText, false, cancellation).ConfigureAwait(false)).DisplayText;
         }
 
-        public async Task<GptReply> SendReplyAsync(GptSettings settings, IList<ChatMessage> history, string userText, bool japaneseSpeech, CancellationToken cancellation)
+        public async Task<GptReply> SendReplyAsync(GptSettings settings, IList<ChatMessage> history, string userText, bool japaneseSpeech, CancellationToken cancellation, Action<GptStreamUpdate> onProgress = null)
         {
+            if (onProgress != null)
+            {
+#if DEEPSEEK
+                string payload = DeepSeekPayload(settings.Model, history, userText, japaneseSpeech);
+#else
+                string payload = BuildPayload(settings.Model, history, userText, japaneseSpeech);
+#endif
+                return await SendStreamingPayloadAsync(settings, payload, japaneseSpeech, cancellation, onProgress).ConfigureAwait(false);
+            }
             if (!japaneseSpeech)
                 return new GptReply { DisplayText = await SendAsync(settings, history, userText, cancellation).ConfigureAwait(false) };
             return await SendCoreAsync(settings, history, userText, true, cancellation).ConfigureAwait(false);
@@ -156,31 +175,45 @@ namespace AnnaDesktopPet
         private async Task<GptReply> SendCoreAsync(GptSettings settings, IList<ChatMessage> history, string userText, bool japaneseSpeech, CancellationToken cancellation)
         {
             if (settings == null) throw new ArgumentNullException("settings");
-            cancellation.ThrowIfCancellationRequested();
-            string key = (settings.ApiKey ?? "").Trim();
-            if (key.Length == 0) throw new InvalidOperationException("请先在 GPT 设置里填写 OpenAI API Key。");
-            GptSettings.ValidateKey(key);
 #if DEEPSEEK
             string payload = DeepSeekPayload(settings.Model, history, userText, japaneseSpeech);
 #else
             string payload = BuildPayload(settings.Model, history, userText, japaneseSpeech);
 #endif
+            return CleanConversationReply(await SendPayloadAsync(settings, payload, japaneseSpeech, cancellation).ConfigureAwait(false));
+        }
+
+        private static GptReply CleanConversationReply(GptReply reply)
+        {
+            if (reply == null) return null;
+            reply.DisplayText = RemoveMessageTimeLabels(reply.DisplayText);
+            reply.JapaneseSpeechText = RemoveMessageTimeLabels(reply.JapaneseSpeechText);
+            return reply;
+        }
+        private static string RemoveMessageTimeLabels(string text)
+        {
+            if (String.IsNullOrEmpty(text)) return text;
+            // Only our standalone metadata line is hidden; actual dates and inline quotes remain intact.
+            return System.Text.RegularExpressions.Regex.Replace(text,
+                @"(?m)^[ \t]*【消息时间：(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})|未知，不推定为今天)】[ \t]*(?:\r?\n|$)", "").Trim();
+        }
+
+        private async Task<GptReply> SendPayloadAsync(GptSettings settings, string payload, bool japaneseSpeech, CancellationToken cancellation)
+        {
+            if (settings == null) throw new ArgumentNullException("settings");
+            cancellation.ThrowIfCancellationRequested();
+            string key = (settings.ApiKey ?? "").Trim();
+            if (key.Length == 0) throw new InvalidOperationException("请先在模型设置里填写 API Key。");
+            GptSettings.ValidateKey(key);
             ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; // TLS 1.2 on .NET Framework.
             using (CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(60));
                 try
                 {
-#if DEEPSEEK
-                    const int maxAttempts = 2;
-#else
-                    const int maxAttempts = 1;
-#endif
-                    for (int attempt = 0; attempt < maxAttempts; attempt++)
+                    for (int attempt = 0; attempt < 2; attempt++)
                     {
-#if DEEPSEEK
                         bool retryEmpty = false;
-#endif
                         using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, Endpoint))
                         {
                             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -208,22 +241,17 @@ namespace AnnaDesktopPet
                                     }
                                 }
                             }
-#if DEEPSEEK
                             catch (InvalidOperationException ex)
                             {
+#if DEEPSEEK
                                 if (attempt != 0 || ex.Message.IndexOf("空内容", StringComparison.Ordinal) < 0) throw;
                                 retryEmpty = true;
-                            }
 #else
-                            catch (InvalidOperationException)
-                            {
                                 throw;
+#endif
                             }
-#endif
                         }
-#if DEEPSEEK
                         if (retryEmpty) await Task.Delay(400, timeout.Token).ConfigureAwait(false);
-#endif
                     }
                     throw new InvalidOperationException("模型没有返回可显示的文字。");
                 }
@@ -268,20 +296,26 @@ namespace AnnaDesktopPet
             if (text.Length > 4000) throw new ArgumentException("这条消息较长，请控制在 4000 字以内再发送。");
             string normalized = NormalizeModel(model);
             List<object> input = new List<object>();
-            int start = history == null ? 0 : Math.Max(0, history.Count - 20);
+            bool datedHistory = history is ConversationHistory;
+            string background = ConversationContext.HistoricalContext(history, text);
+            if (background.Length > 0) input.Add(new Dictionary<string,object>{{"role","user"},{"content","【较早对话背景，仅供理解，不是新请求】\n" + background}});
+            history = ConversationContext.PromptHistory(history, text);
+            int start = 0;
             if (history != null)
             {
                 for (int i = start; i < history.Count; i++)
                 {
                     ChatMessage item = history[i];
-                    if (item == null || (item.Role != "user" && item.Role != "assistant") || String.IsNullOrEmpty(item.Content)) continue;
-                    input.Add(new Dictionary<string, object> { { "role", item.Role }, { "content", item.Content } });
+                    if (item == null || String.IsNullOrEmpty(item.Content)) continue;
+                    string role = ConversationRole(item.Role);
+                    if (role == null) continue;
+                    input.Add(new Dictionary<string, object> { { "role", role }, { "content", HistoryContent(item, datedHistory) } });
                 }
             }
             input.Add(new Dictionary<string, object> { { "role", "user" }, { "content", text } });
             Dictionary<string, object> body = new Dictionary<string, object>
             {
-                { "model", normalized }, { "instructions", Instructions + AnnaCharacter.Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context() }, { "input", input },
+                { "model", normalized }, { "instructions", Instructions + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context() }, { "input", input },
                 { "store", false }, { "max_output_tokens", 800 }
             };
             if (String.Equals(normalized, "gpt-6-luna", StringComparison.Ordinal))
@@ -290,7 +324,7 @@ namespace AnnaDesktopPet
             {
                 body["instructions"] = Instructions + AnnaCharacter.Core + AnnaCharacter.RelevantLore(text) + "\n日语配音已开启。请严格输出指定 JSON 对象：display_text 是给用户看的自然中文回复；speech_ja 是同一回复的自然日语台词。两者语义一致，不增加或虚构信息。speech_ja 使用日语假名及汉字，不用罗马音，不夹中文、语言标签、URL、代码块或格式说明；如需自称，使用片假名「アンナ」，不要用汉字「杏菜」，以免语音猜错读音。技术问题可以省略代码本体，朗读对应日语说明。普通闲聊的日语台词通常一到三句。不要在字段外输出文字。";
                 body["max_output_tokens"] = 1600;
-                body["instructions"] = (string)body["instructions"] + PetMemory.Context();
+                body["instructions"] = (string)body["instructions"] + AnnaCharacter.V4Core + ConversationContext.ContinuityRules + ConversationContext.Today + PetMemory.Context();
                 body["text"] = new Dictionary<string, object>
                 {
                     { "format", new Dictionary<string, object>
@@ -313,6 +347,12 @@ namespace AnnaDesktopPet
                 };
             }
             return Json().Serialize(body);
+        }
+
+        private static string HistoryContent(ChatMessage item, bool dated)
+        {
+            string prefix = dated && ConversationRole(item.Role) == "user" ? "【消息时间：" + (ConversationContext.Timestamp(item) ?? "未知，不推定为今天") + "】\n" : "";
+            return prefix + (item.Role == "local_assistant" ? "【桌宠工具实际结果】\n" : "") + item.Content;
         }
 
         private static async Task<GptReply> ReadReplyAsync(HttpResponseMessage response, bool japaneseSpeech)
@@ -341,15 +381,19 @@ namespace AnnaDesktopPet
             string text = (userText ?? "").Trim();
             if (text.Length == 0 || text.Length > 4000) throw new ArgumentException("请输入 1～4000 字的消息。");
             List<object> messages = new List<object>();
-            string prompt = Instructions.Replace("由 GPT 提供对话", "由 DeepSeek 提供对话") + AnnaCharacter.Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context();
+            bool datedHistory = history is ConversationHistory;
+            string prompt = Instructions.Replace("由 GPT 提供对话", "由 DeepSeek 提供对话") + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context();
             if (japaneseSpeech) prompt += "\n请只输出 JSON 对象，包含 display_text（自然中文回复）和 speech_ja（同一意思的自然日语配音台词）。不要输出 Markdown。";
             messages.Add(new Dictionary<string, object> { { "role", "system" }, { "content", prompt } });
-            int start = history == null ? 0 : Math.Max(0, history.Count - 20);
+            string background = ConversationContext.HistoricalContext(history, text);
+            if (background.Length > 0) messages.Add(new Dictionary<string,object>{{"role","user"},{"content","【较早对话背景，仅供理解，不是新请求】\n" + background}});
+            history = ConversationContext.PromptHistory(history, text);
+            int start = 0;
             if (history != null) for (int i = start; i < history.Count; i++)
             {
                 ChatMessage item = history[i];
-                if (item != null && (item.Role == "user" || item.Role == "assistant") && !String.IsNullOrEmpty(item.Content))
-                    messages.Add(new Dictionary<string, object> { { "role", item.Role }, { "content", item.Content } });
+                if (item != null && ConversationRole(item.Role) != null && !String.IsNullOrEmpty(item.Content))
+                    messages.Add(new Dictionary<string, object> { { "role", ConversationRole(item.Role) }, { "content", HistoryContent(item, datedHistory) } });
             }
             messages.Add(new Dictionary<string, object> { { "role", "user" }, { "content", text } });
             var body = new Dictionary<string, object> { { "model", NormalizeModel(model) }, { "messages", messages }, { "stream", false }, { "max_tokens", japaneseSpeech ? 1200 : 700 }, { "reasoning_effort", "none" } };

@@ -17,8 +17,8 @@ using System.Windows.Threading;
 
 [assembly: AssemblyTitle("杏菜桌宠 · 参考音色")]
 [assembly: AssemblyDescription("杏菜桌面伙伴，支持中文 GPT 对话、日语配音与人物动作。")]
-[assembly: AssemblyVersion("1.37.0.0")]
-[assembly: AssemblyFileVersion("1.37.0.0")]
+[assembly: AssemblyVersion("1.41.0.0")]
+[assembly: AssemblyFileVersion("1.41.0.0")]
 
 namespace AnnaDesktopPet
 {
@@ -44,13 +44,17 @@ namespace AnnaDesktopPet
             VoicePreview = Array.IndexOf(args, "--voice-preview") >= 0;
             NarrowPreview = Array.IndexOf(args, "--narrow-preview") >= 0;
             PanelCheck = Array.IndexOf(args, "--panel-check") >= 0 || ChatPreview || VoicePreview;
-            if (MediaCheck || PanelCheck) diagnosticDataDir = Path.Combine(Path.GetTempPath(), "AnnaDesktopPet-Diagnostic", Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+            if (Smoke || MediaCheck || PanelCheck) diagnosticDataDir = Path.Combine(Path.GetTempPath(), "AnnaDesktopPet-Diagnostic", Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
             int outputAt = Array.IndexOf(args, "--report");
             if (outputAt >= 0 && outputAt + 1 < args.Length) SmokePath = args[outputAt + 1];
             bool first;
             using (Mutex mutex = new Mutex(true, PanelCheck ? "Local\\AnnaDesktopPet.v1.panel-check" : MediaCheck ? "Local\\AnnaDesktopPet.v1.media-check" : "Local\\AnnaDesktopPet.v1", out first))
             {
-                if (!first && !Smoke) return 0;
+                if (!first && !Smoke)
+                {
+                    MessageBox.Show("已有桌宠正在运行，本次启动的 v" + Assembly.GetExecutingAssembly().GetName().Version.ToString(2) + " 没有替换它。\n\n请先在当前桌宠的菜单中选择“退出桌宠”，再重新打开。\n聊天窗口标题中的版本号可以确认是否已切换。", "杏菜 · 已有桌宠运行", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return 0;
+                }
                 try
                 {
                     Directory.CreateDirectory(DataDir);
@@ -171,7 +175,7 @@ namespace AnnaDesktopPet
         private Action<string> focusVoiceSmokeHook;
         private Window panel;
         private GptChatWindow chatWindow;
-        private readonly List<ChatMessage> chatHistory = new List<ChatMessage>();
+        private readonly ConversationHistory chatHistory = ConversationHistory.LoadDefault();
         private readonly GptSettings gptSettings;
         private bool thinking;
         private TextBlock focusLabel;
@@ -449,7 +453,7 @@ namespace AnnaDesktopPet
             {
                 try { desktopShell = new DesktopShell(this, OpenChat, voice.Stop, OnShellVisibilityChanged); }
                 catch (Exception ex) { Program.Log("Tray initialization failed: " + ex.Message); }
-                voiceChat=new VoiceChat(this,delegate(string text){OpenChat();chatWindow.SendVoice(text);},delegate(string message){Say(message,8);},delegate {if(hiddenForGame || closing)return false;if(chatWindow!=null && !chatWindow.CanAcceptVoice){Say("请先发送或清空输入框，并等待当前回复完成。",5);return false;}if(String.IsNullOrWhiteSpace(gptSettings.ApiKey)){Say("请先在 GPT 设置中填写 API Key。",5);return false;}voice.Stop();return true;});
+                voiceChat=new VoiceChat(this,delegate(string text){OpenChat();chatWindow.SendVoice(text);},delegate(string message){Say(message,8);},delegate {if(hiddenForGame || closing)return false;if(String.IsNullOrWhiteSpace(gptSettings.ApiKey)){Say("请先在模型设置中填写 API Key。",5);return false;}if(chatWindow!=null && !chatWindow.PrepareVoiceInput()){Say("输入框里还有未发送的文字，请先发送或清空。",5);return false;}voice.Stop();return true;},delegate {return !hiddenForGame && !closing && !String.IsNullOrWhiteSpace(gptSettings.ApiKey) && (chatWindow==null || chatWindow.CanAcceptVoice);});
             }
         }
 
@@ -1055,7 +1059,10 @@ namespace AnnaDesktopPet
         private void OpenChat()
         {
             if (chatWindow != null) { if (!chatWindow.IsVisible) chatWindow.Show(); if (chatWindow.WindowState == WindowState.Minimized) chatWindow.WindowState = WindowState.Normal; chatWindow.Activate(); chatWindow.FocusInput(); return; }
-            chatWindow = new GptChatWindow(this, chatHistory, gptSettings, Say, delegate(bool active) { thinking = active; }, OnAssistantReply, voice.Stop, delegate { return mediaSettings.AutoReadReplies; }, localMusic.Handle, localMusic.CancelPending);
+            chatWindow = new GptChatWindow(this, chatHistory, gptSettings, Say, delegate(bool active) { thinking = active; }, OnAssistantReply, voice.Stop, delegate { return mediaSettings.AutoReadReplies && !settings.Sleeping; }, localMusic.Handle, localMusic.CancelPending, localMusic, null,
+                delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.BeginStream(); },
+                delegate(string sentence) { if (!Program.Smoke && !closing && !hiddenForGame) voice.AppendStream(sentence); },
+                delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.CompleteStream(); });
             chatWindow.Closed += delegate { chatWindow = null; thinking = false; };
             chatWindow.Show(); chatWindow.Activate();
         }

@@ -96,6 +96,7 @@ namespace AnnaDesktopPet
             blinkFrames = LoadSequence("animation-blink.png", "AnnaDesktopPet.animation-blink.png", baseFrame);
             speechFrames = LoadSequence("animation-speak.png", "AnnaDesktopPet.animation-speak.png", baseFrame);
             happyFrames = LoadSequence("animation-happy.png", "AnnaDesktopPet.animation-happy.png", baseFrame);
+            // Walking is retired. Do not load its assets merely because an old pack has them.
             walkFrames = null;
             if (waveFrames != null || blinkFrames != null || speechFrames != null) Status += "；连续动作已就绪";
             LoadOutfitPack(baseFrame);
@@ -103,10 +104,12 @@ namespace AnnaDesktopPet
         private void LoadOutfitPack(MotionFrame idle,string explicitPath=null){
             string path=explicitPath ?? Appearance.Asset("animation-life.png");if(!File.Exists(path))return;
             try{
-                string directory=Path.GetDirectoryName(path);string[] actions={"wave","walk","speak","sit"};bool hd=true,mid=true;foreach(string action in actions){if(!File.Exists(Path.Combine(directory,"animation-"+action+"-hd.png")))hd=false;if(!File.Exists(Path.Combine(directory,"animation-"+action+"-mid.png")))mid=false;}
-                int count=hd&&mid?8:4;var raw=new MotionFrame[count*4];
+                // HD speaking must not depend on a retired walking sheet. The legacy
+                // atlas still uses rows 0/1/2/3 for wave/walk/speak/sit respectively.
+                string directory=Path.GetDirectoryName(path);string[] actions={"wave","speak","sit"};int[] legacyRows={0,2,3};bool hd=true,mid=true;foreach(string action in actions){if(!File.Exists(Path.Combine(directory,"animation-"+action+"-hd.png")))hd=false;if(!File.Exists(Path.Combine(directory,"animation-"+action+"-mid.png")))mid=false;}
+                int count=hd&&mid?8:4;var raw=new MotionFrame[count*actions.Length];
                 if(hd){
-                    for(int row=0;row<4;row++){
+                    for(int row=0;row<actions.Length;row++){
                         MotionFrame[] keys=ReadHdSheet(Path.Combine(directory,"animation-"+actions[row]+"-hd.png"));
                         MotionFrame[] between=count==8?ReadHdSheet(Path.Combine(directory,"animation-"+actions[row]+"-mid.png")):null;
                         // One school-uniform wave key mistakenly changes arm; use the matching raised-arm key.
@@ -115,20 +118,20 @@ namespace AnnaDesktopPet
                     }
                 }else{
                     var image=new BitmapImage();using(var stream=File.OpenRead(path)){image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.StreamSource=stream;image.EndInit();image.Freeze();}
-                    for(int i=0;i<16;i++){int col=i%4,row=i/4;int x=col*image.PixelWidth/4,y=row*image.PixelHeight/5;raw[i]=IsolateSprite(new CroppedBitmap(image,new Int32Rect(x,y,(col+1)*image.PixelWidth/4-x,(row+1)*image.PixelHeight/5-y)));}
+                    for(int i=0;i<raw.Length;i++){int col=i%4,row=legacyRows[i/4];int x=col*image.PixelWidth/4,y=row*image.PixelHeight/5;raw[i]=IsolateSprite(new CroppedBitmap(image,new Int32Rect(x,y,(col+1)*image.PixelWidth/4-x,(row+1)*image.PixelHeight/5-y)));}
                 }
-                Int32Rect reference=idle.SubjectBounds();double standingHeight=0;for(int i=0;i<count*3;i++)standingHeight=Math.Max(standingHeight,raw[i].SubjectBounds().Height);
+                Int32Rect reference=idle.SubjectBounds();double standingHeight=0;for(int i=0;i<count*2;i++)standingHeight=Math.Max(standingHeight,raw[i].SubjectBounds().Height);
                 double scale=reference.Height/standingHeight;double center=reference.X+reference.Width*.5,foot=reference.Y+reference.Height;
                 var aligned=new MotionFrame[raw.Length];
                 for(int i=0;i<raw.Length;i++){
-                    Int32Rect bounds=raw[i].SubjectBounds();double anchor=i>=count && i<count*2?UpperHeadCenterX(raw[i]):LowerBodyCenterX(raw[i]);
+                    Int32Rect bounds=raw[i].SubjectBounds();double anchor=LowerBodyCenterX(raw[i]);
                     var visual=new DrawingVisual();using(var dc=visual.RenderOpen())dc.DrawImage(raw[i].Image,new Rect(center-anchor*scale,foot-(bounds.Y+bounds.Height)*scale,raw[i].Width*scale,raw[i].Height*scale));
                     var rendered=new RenderTargetBitmap(idle.Width,idle.Height,96,96,PixelFormats.Pbgra32);rendered.Render(visual);rendered.Freeze();aligned[i]=new MotionFrame(rendered);
                 }
-                waveFrames=new MotionFrame[count];walkFrames=new MotionFrame[count];speechFrames=new MotionFrame[count];sittingFrames=new MotionFrame[count];
-                Array.Copy(aligned,0,waveFrames,0,count);Array.Copy(aligned,count,walkFrames,0,count);Array.Copy(aligned,count*2,speechFrames,0,count);Array.Copy(aligned,count*3,sittingFrames,0,count);
+                waveFrames=new MotionFrame[count];walkFrames=null;speechFrames=new MotionFrame[count];sittingFrames=new MotionFrame[count];
+                Array.Copy(aligned,0,waveFrames,0,count);Array.Copy(aligned,count,speechFrames,0,count);Array.Copy(aligned,count*2,sittingFrames,0,count);
                 // Keep the original clean standing art; animation sheets must not replace it.
-                frames["sit"]=sittingFrames[count-1];Status=(hd?"高清":"")+count+"帧服装动画：挥手、走路、说话、坐下";
+                frames["sit"]=sittingFrames[count-1];Status=(hd?"高清":"")+count+"帧服装说话动画已就绪";
                 LoadWaveTrial(idle,directory);
             }catch(Exception ex){Program.Log("Outfit animation pack failed: "+ex.Message);}
         }
