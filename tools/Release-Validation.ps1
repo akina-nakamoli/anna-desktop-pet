@@ -53,6 +53,7 @@ function Get-ReleaseAssetMap([string]$Repo) {
 }
 
 function Assert-NoPrivateReleaseFile([string]$Relative) {
+    if ($Relative -cmatch '^ja-tts/pyopenjtalk/dictionary/(char|matrix)\.bin$') { return }
     if ($Relative -match '(^|/)(logs|models|\.git)(/|$)|(^|/)(engine-path|python-path|qqmusic-path|asr-engine-path)\.txt$|(^|/)engine-process\.json$|(^|/)([^/]*key[^/]*|[^/]*settings[^/]*|memory[^/]*|chat-history[^/]*|conversation[^/]*|appearance|favorites|routine)\.(json|ini|txt|dat|bin)$|\.(log|key|tmp|bin|dat)$') {
         throw "Private runtime file in release: $Relative"
     }
@@ -64,6 +65,9 @@ function Assert-ReleaseBuild([string]$Repo, [string]$Directory, [string]$Version
         if (-not (Test-Path -LiteralPath (Join-Path $Directory $required) -PathType Leaf)) { throw "Incomplete build: $Directory/$required" }
     }
     $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $Directory 'AnnaDesktopPet.exe')).FileVersion
+    foreach ($required in @('tts.py','python.exe','LICENSE.txt','pyopenjtalk/dictionary/sys.dic','pyopenjtalk/dictionary/COPYING','pyopenjtalk/htsvoice/mei_normal.htsvoice','pyopenjtalk/htsvoice/LICENSE_mei_normal.htsvoice')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Directory ('ja-tts/' + $required)) -PathType Leaf)) { throw "Missing portable Japanese voice file: $required" }
+    }
     if ($fileVersion -ne ($Version + '.0')) { throw "Wrong program version: $fileVersion; expected $Version.0" }
     foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Recurse) {
         Assert-NoPrivateReleaseFile ($file.FullName.Substring($Directory.Length).TrimStart('\','/').Replace('\','/'))
@@ -88,7 +92,12 @@ function Assert-ReleaseZip([string]$Repo, [string]$ZipPath, [string]$PackageName
             if (-not $name.StartsWith($PackageName + '/', [StringComparison]::Ordinal) -or $name -match '(^|/)\.\.(/|$)') { throw "Unexpected archive path: $name" }
             if ($entries.ContainsKey($name)) { throw "Duplicate archive entry: $name" }
             $entries[$name] = $entry
-            Assert-NoPrivateReleaseFile $name
+            $runtimePrefix = $PackageName + '/app/'
+            if ($name.StartsWith($runtimePrefix, [StringComparison]::Ordinal)) {
+                Assert-NoPrivateReleaseFile ($name.Substring($runtimePrefix.Length))
+            } else {
+                Assert-NoPrivateReleaseFile $name
+            }
         }
         foreach ($doc in @('README.md','ASSETS.md','LICENSE')) {
             if (-not $entries.ContainsKey($PackageName + '/' + $doc)) { throw "Archive document missing: $doc" }

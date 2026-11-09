@@ -131,13 +131,31 @@ namespace AnnaDesktopPet
             });
             await SettleBackground(cancellation);
         }
+        private static string ConfigPath { get { return Path.Combine(Program.DataDir, "qqmusic-path.txt"); } }
+
+        internal static string ReadConfiguredPath()
+        {
+            return File.Exists(ConfigPath) ? File.ReadAllText(ConfigPath).Trim() : "";
+        }
+
+        internal static string SaveConfiguredPath(string path)
+        {
+            string resolved = ValidatePath((path ?? "").Trim().Trim('"').Trim());
+            Directory.CreateDirectory(Program.DataDir);
+            File.WriteAllText(ConfigPath, resolved);
+            return resolved;
+        }
+
         private static string ResolvePath()
         {
-            string config = Path.Combine(Program.DataDir, "qqmusic-path.txt");
-            string path = File.Exists(config) ? File.ReadAllText(config).Trim() : "";
+            return ValidatePath(ReadConfiguredPath());
+        }
+
+        private static string ValidatePath(string path)
+        {
             if (String.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path) || !File.Exists(path) ||
                 !String.Equals(Path.GetFileName(path), "QQMusic.exe", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("未配置 QQ 音乐程序。请先启动 QQ 音乐，或在设置目录的 qqmusic-path.txt 中填写 QQMusic.exe 的完整路径。");
+                throw new InvalidOperationException("请在「音乐控制」填写或选择本机 QQMusic.exe 的完整路径，也可以先手动打开 QQ 音乐。");
             return Path.GetFullPath(path);
         }
     }

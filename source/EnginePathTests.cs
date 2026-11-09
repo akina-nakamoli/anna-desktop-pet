@@ -29,19 +29,26 @@ namespace AnnaDesktopPet {
             Check(rejected,name);
         }
         public static int Main() {
-            string root=Path.Combine(Path.GetTempPath(),"anna-engine-path-"+Guid.NewGuid().ToString("N"));
+            string root=Path.Combine(Path.GetTempPath(),"anna-asr-"+Guid.NewGuid().ToString("N").Substring(0,12));
             Directory.CreateDirectory(root);
             try {
                 string oldEnv=Environment.GetEnvironmentVariable("ANNA_ASR_ENGINE");
                 string userSettings=Path.Combine(root,"old-user-settings");Directory.CreateDirectory(userSettings);
                 Program.DataDir=userSettings;
-                string priorEngine=EngineFolder(Path.Combine(root,"prior-release","voice"));
+                string priorEngine=EngineFolder(Path.Combine(root,"engine"));
                 string oldConfig=Path.Combine(userSettings,"asr-engine-path.txt");
                 try {
                     Environment.SetEnvironmentVariable("ANNA_ASR_ENGINE",priorEngine);
                     Check(AsrWorker.Engine==priorEngine,"previous release environment setting still works");
                     Environment.SetEnvironmentVariable("ANNA_ASR_ENGINE",null);
-                    File.WriteAllText(oldConfig,priorEngine);
+                    bool incompleteRejected=false;
+                    try { AsrWorker.RegisterInputEngine(priorEngine); } catch(InvalidOperationException) { incompleteRejected=true; }
+                    Check(incompleteRejected && !File.Exists(oldConfig),"a TTS-only installation cannot be saved as the input engine");
+                    string model=Path.Combine(priorEngine,"tools","asr","models","speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch","model.pt");
+                    Directory.CreateDirectory(Path.GetDirectoryName(model));
+                    File.WriteAllText(model,"test marker");
+                    AsrWorker.RegisterInputEngine(priorEngine);
+                    Check(AsrWorker.Engine==priorEngine,"engine chosen in settings is available to an app outside the installation tree");
                     Check(AsrWorker.Engine==priorEngine,"previous release per-user setting still works");
                     Environment.SetEnvironmentVariable("ANNA_ASR_ENGINE",Path.Combine(root,"invalid-override"));
                     bool rejected=false;try { var ignored=AsrWorker.Engine; } catch(InvalidOperationException){ rejected=true; }

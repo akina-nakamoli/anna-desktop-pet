@@ -37,7 +37,9 @@ namespace AnnaDesktopPet
 #else
                 const string provider = "GPT";
 #endif
-                Console.WriteLine("PASS " + provider + ": " + assertions + " stream UI contract assertions. Fake HTTP and speech only.");
+                bool packagedVoice = args.Length > 0 && args[0] == "--packaged-voice";
+                Console.WriteLine("PASS " + provider + ": " + assertions +
+                    (packagedVoice ? " packaged voice checks with synthetic chat and real offline synthesis." : " stream UI contract assertions. Fake HTTP and speech only."));
                 return 0;
             }
             catch (Exception ex) { Console.WriteLine("FAIL: " + ex); return 1; }
@@ -45,6 +47,7 @@ namespace AnnaDesktopPet
 
         private static async Task Run(string scenario)
         {
+            if (scenario == "--packaged-voice") { await PackagedVoiceReadsChat(); return; }
             if (scenario == "--voice-gates") { VoiceLifecycleUsesPureSubmissionGate(); return; }
             if (scenario == "--rebuild") { await RebuildPreservesActiveStream(); return; }
             if (scenario == "--late-receipt") { await LateMusicReceiptBelongsToInterruptedTurn(); return; }
@@ -60,6 +63,53 @@ namespace AnnaDesktopPet
             await FailedMusicNarrationStopsStreamingSpeech();
             await ClosingRejectsLateWork();
             await UnauthorizedRemainsRetryable();
+        }
+
+        private static async Task PackagedVoiceReadsChat()
+        {
+            var settings = new SpeechSettings();
+            Check(settings.Engine == "gpt-sovits" && !settings.AutoReadReplies && File.Exists(settings.ReferenceAudio),
+                "Fresh package presents the reference voice with its bundled sample and waits for setup");
+            Check(PortableJapaneseVoice.Available, "Optional offline Japanese voice is installed");
+            settings.Engine = "portable";
+            settings.AutoReadReplies = true;
+            string wave = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test-ja-" + Guid.NewGuid().ToString("N") + ".wav");
+            try
+            {
+                using (var speech = new SpeechService(Dispatcher.CurrentDispatcher, wave))
+                {
+                    speech.ConfigureBackend(settings.Engine, "", "", "");
+                    speech.Configure(settings.VoiceId, settings.Rate, settings.Volume);
+                    speech.Speak("こんにちは、アンナだよ。");
+                    await WaitForPackagedWave(speech, wave);
+                    File.Delete(wave);
+                    using (var fixture = new Fixture(settings.AutoReadReplies, null, speech))
+                    {
+                        string reply = "{\"display_text\":\"今天聊点什么？\",\"speech_ja\":\"今日は何を話そうか？\"}";
+                        var stream = fixture.Transport.AddStream();
+                        Task send = fixture.Chat.SubmitAsync("你好，杏菜");
+                        stream.Push(Delta(reply));
+                        stream.Complete(Completed(reply));
+                        await send;
+                        Check(Visible(fixture.Chat).Contains("今天聊点什么？"), "Chat displayed its Chinese reply");
+                        await WaitForPackagedWave(speech, wave);
+                    }
+                }
+            }
+            finally { if (File.Exists(wave)) File.Delete(wave); }
+        }
+
+        private static async Task WaitForPackagedWave(SpeechService speech, string wave)
+        {
+            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            while (speech.IsBusy && DateTime.UtcNow < deadline) await Task.Delay(25);
+            Check(!speech.IsBusy && File.Exists(wave), "Offline voice produced a WAV: " + speech.Status);
+            byte[] data = File.ReadAllBytes(wave);
+            GptSovitsClient.ValidateWave(data);
+            bool hasSignal = false;
+            for (int i = 44; i + 1 < data.Length; i += 2)
+                if (Math.Abs((int)BitConverter.ToInt16(data, i)) > 100) { hasSignal = true; break; }
+            Check(data.Length > 48000 && hasSignal, "Offline speech WAV contains audible PCM");
         }
 
         private static void VoiceLifecycleUsesPureSubmissionGate()
@@ -418,7 +468,7 @@ namespace AnnaDesktopPet
             internal readonly GptChatWindow Chat;
             internal readonly string Path;
             private readonly string directory;
-            internal Fixture(bool japanese, MusicRouter contextualMusic = null)
+            internal Fixture(bool japanese, MusicRouter contextualMusic = null, SpeechService realSpeech = null)
             {
                 string root = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
                 directory = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, "synthetic-stream-ui-" + Guid.NewGuid().ToString("N")));
@@ -432,15 +482,15 @@ namespace AnnaDesktopPet
                 object[] args = new object[parameters.Length];
                 args[0] = null; args[1] = History; args[2] = new GptSettings { ApiKey = "offline-stream-ui-test-no-real-key" };
                 args[3] = new Action<string, double>(delegate { }); args[4] = new Action<bool>(delegate { });
-                args[5] = new Action<string>(delegate(string text) { Speech.Finals.Add(text); });
-                args[6] = new Action(delegate { Speech.Stops++; }); args[7] = new Func<bool>(delegate { return japanese; });
+                args[5] = new Action<string>(delegate(string text) { Speech.Finals.Add(text); if (realSpeech != null) realSpeech.Speak(text); });
+                args[6] = new Action(delegate { Speech.Stops++; if (realSpeech != null) realSpeech.Stop(); }); args[7] = new Func<bool>(delegate { return japanese; });
                 for (int i = 8; i < parameters.Length; i++)
                 {
                     if (parameters[i].Name == "modelClient") args[i] = Transport.Client;
                     else if (parameters[i].Name == "contextualMusic") args[i] = contextualMusic;
-                    else if (parameters[i].Name == "beginStreamSpeech") args[i] = new Action(delegate { Speech.Starts++; });
-                    else if (parameters[i].Name == "appendStreamSpeech") args[i] = new Action<string>(delegate(string text) { Speech.Sentences.Add(text); });
-                    else if (parameters[i].Name == "endStreamSpeech") args[i] = new Action(delegate { Speech.Ends++; });
+                    else if (parameters[i].Name == "beginStreamSpeech") args[i] = new Action(delegate { Speech.Starts++; if (realSpeech != null) realSpeech.BeginStream(); });
+                    else if (parameters[i].Name == "appendStreamSpeech") args[i] = new Action<string>(delegate(string text) { Speech.Sentences.Add(text); if (realSpeech != null) realSpeech.AppendStream(text); });
+                    else if (parameters[i].Name == "endStreamSpeech") args[i] = new Action(delegate { Speech.Ends++; if (realSpeech != null) realSpeech.CompleteStream(); });
                     else args[i] = null;
                 }
                 Chat = (GptChatWindow)constructor.Invoke(args);

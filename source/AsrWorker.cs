@@ -7,13 +7,31 @@ using System.Web.Script.Serialization;
 using System.Collections.Generic;
 namespace AnnaDesktopPet {
     internal sealed class AsrWorker : IDisposable {
+        private static string InputRegistration { get { return Path.Combine(Program.DataDir,"asr-engine-path.txt"); } }
+        private const string InputSetup = "请打开「语音输入与麦克风」，选择已安装中文识别模型的引擎。";
+
+        internal static void RegisterInputEngine(string value) {
+            if(!String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANNA_ASR_ENGINE")))
+                throw new InvalidOperationException("当前由 ANNA_ASR_ENGINE 指定中文识别引擎，请先更新或清除该环境变量。");
+            string engine=ResolveConfiguredEngine(value);
+            CheckInputModel(engine);
+            Directory.CreateDirectory(Program.DataDir);
+            File.WriteAllText(InputRegistration,engine);
+        }
+
+        private static void CheckInputModel(string engine) {
+            string model=Path.Combine(engine,"tools","asr","models","speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch","model.pt");
+            if(!File.Exists(model))
+                throw new InvalidOperationException("该引擎缺少中文语音识别模型 Paraformer。"+InputSetup);
+        }
+
         internal static string Engine {
             get {
                 // Preserve settings accepted by earlier public releases. Explicit choices
                 // take precedence over portable discovery; stale choices surface an error.
                 string configured=Environment.GetEnvironmentVariable("ANNA_ASR_ENGINE");
                 if(!String.IsNullOrWhiteSpace(configured))return ResolveConfiguredEngine(configured);
-                string registration=Path.Combine(Program.DataDir,"asr-engine-path.txt");
+                string registration=InputRegistration;
                 if(File.Exists(registration))return ResolveConfiguredEngine(File.ReadAllText(registration));
                 return ResolveEngine(AppDomain.CurrentDomain.BaseDirectory);
             }
@@ -53,7 +71,7 @@ namespace AnnaDesktopPet {
               catch(UnauthorizedAccessException ex) { throw new InvalidOperationException("没有权限读取本地语音引擎目录或登记文件。",ex); }
               catch(ArgumentException ex) { throw new InvalidOperationException("本地语音引擎登记路径格式无效，请检查 voice-engine/engine-path.txt。",ex); }
               catch(NotSupportedException ex) { throw new InvalidOperationException("本地语音引擎登记路径格式无效，请检查 voice-engine/engine-path.txt。",ex); }
-            throw new InvalidOperationException("未找到完整的本地语音引擎，请在运行目录 voice-engine/engine-path.txt 登记包含 api_v2.py 与 runtime/python.exe 的引擎目录。");
+            throw new InvalidOperationException("未找到中文语音输入引擎。"+InputSetup+"也可以在 voice-engine/engine-path.txt 登记引擎路径。");
         }
         private static bool ValidEngine(string path) {
             return File.Exists(Path.Combine(path,"api_v2.py")) && File.Exists(Path.Combine(path,"runtime","python.exe"));
@@ -76,6 +94,7 @@ namespace AnnaDesktopPet {
                     if(process!=null)process.Dispose();
                     ready=new TaskCompletionSource<bool>();Status="正在加载本地中文模型…";
                     string engine=Engine;
+                    CheckInputModel(engine);
                     var info=new ProcessStartInfo(Path.Combine(engine,"runtime","python.exe"),"-u \""+Path.Combine(Path.GetDirectoryName(typeof(AsrWorker).Assembly.Location),"local_asr.py")+"\" \""+engine+"\" --server"){WorkingDirectory=engine,UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
                     process=new Process{StartInfo=info,EnableRaisingEvents=true};
                     process.OutputDataReceived+=OnOutput;

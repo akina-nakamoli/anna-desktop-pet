@@ -18,7 +18,7 @@ namespace AnnaDesktopPet
         public bool ReadLocal = false;
         public bool MotionsEnabled = true;
         public bool AutonomousEnabled = true;
-        private static string FileName { get { return Path.Combine(Program.DataDir, "media-settings.ini"); } }
+        private static string FileName { get { return Path.Combine(Program.DataDir, PortableJapaneseVoice.IsBundled ? "media-settings-portable.ini" : "media-settings.ini"); } }
         private static string DefaultReference()
         {
             string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "reference", "anna.wav");
@@ -34,9 +34,9 @@ namespace AnnaDesktopPet
                 {
                     int split = line.IndexOf('='); if (split < 0) continue;
                     string key = line.Substring(0, split), value = line.Substring(split + 1); int n; bool flag;
-                    if (key == "engine") s.Engine = value == "windows" ? "windows" : "gpt-sovits";
+                    if (key == "engine") s.Engine = value == "windows" || value == "portable" ? value : "gpt-sovits";
                     if (key == "endpoint") s.Endpoint = value;
-                    if (key == "reference_audio") s.ReferenceAudio = value;
+                    if (key == "reference_audio") s.ReferenceAudio = value == "@bundled-reference" ? DefaultReference() : value;
                     if (key == "reference_text") s.ReferenceText = value;
                     if (key == "voice") s.VoiceId = value;
                     if (key == "voice_language") s.VoiceLanguage = "ja";
@@ -55,7 +55,10 @@ namespace AnnaDesktopPet
         {
             if (Program.Smoke) return;
             Directory.CreateDirectory(Program.DataDir);
-            File.WriteAllLines(FileName, new string[] { "engine=" + Clean(Engine), "endpoint=" + Clean(Endpoint), "reference_audio=" + Clean(ReferenceAudio), "reference_text=" + Clean(ReferenceText), "voice=" + Clean(VoiceId), "voice_language=ja", "rate=" + Rate.ToString(CultureInfo.InvariantCulture), "volume=" + Volume.ToString(CultureInfo.InvariantCulture), "read_gpt=" + AutoReadReplies, "read_local=" + ReadLocal, "motions=" + MotionsEnabled, "autonomous=" + AutonomousEnabled });
+            string bundled = DefaultReference();
+            string audio = bundled.Length > 0 && String.Equals(bundled, ReferenceAudio, StringComparison.OrdinalIgnoreCase)
+                ? "@bundled-reference" : Clean(ReferenceAudio);
+            File.WriteAllLines(FileName, new string[] { "engine=" + Clean(Engine), "endpoint=" + Clean(Endpoint), "reference_audio=" + audio, "reference_text=" + Clean(ReferenceText), "voice=" + Clean(VoiceId), "voice_language=ja", "rate=" + Rate.ToString(CultureInfo.InvariantCulture), "volume=" + Volume.ToString(CultureInfo.InvariantCulture), "read_gpt=" + AutoReadReplies, "read_local=" + ReadLocal, "motions=" + MotionsEnabled, "autonomous=" + AutonomousEnabled });
         }
         private static string Clean(string text) { return (text ?? "").Replace("\r", "").Replace("\n", ""); }
     }

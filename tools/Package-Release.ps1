@@ -1,6 +1,6 @@
-﻿param(
+param(
     [string]$Output = (Join-Path (Split-Path $PSScriptRoot -Parent) 'releases'),
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.41.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.41.4',
     [switch]$SkipBuild,
     [switch]$ReplaceExisting
 )
@@ -24,9 +24,9 @@ foreach ($variant in @(@{Name='GPT'; Args=@{}}, @{Name='DeepSeek'; Args=@{DeepSe
     if (-not $SkipBuild) {
         Remove-ReleaseDirectory $repo $destination
         if ($variant.Args.DeepSeek) {
-            & (Join-Path $repo 'source/build.ps1') -Destination $destination -DeepSeek
+            & (Join-Path $repo 'source/build.ps1') -Destination $destination -PortableVoice -DeepSeek
         } else {
-            & (Join-Path $repo 'source/build.ps1') -Destination $destination
+            & (Join-Path $repo 'source/build.ps1') -Destination $destination -PortableVoice
         }
         if ($LASTEXITCODE -ne 0) { throw "Build failed: $($variant.Name)" }
     }

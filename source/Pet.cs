@@ -17,8 +17,8 @@ using System.Windows.Threading;
 
 [assembly: AssemblyTitle("杏菜桌宠 · 参考音色")]
 [assembly: AssemblyDescription("杏菜桌面伙伴，支持中文 GPT 对话、日语配音与人物动作。")]
-[assembly: AssemblyVersion("1.41.0.0")]
-[assembly: AssemblyFileVersion("1.41.0.0")]
+[assembly: AssemblyVersion("1.41.4.0")]
+[assembly: AssemblyFileVersion("1.41.4.0")]
 
 namespace AnnaDesktopPet
 {
@@ -690,7 +690,7 @@ namespace AnnaDesktopPet
                         SpeechSettings freshMedia = new SpeechSettings();
                         if (freshMedia.VoiceLanguage != "ja" || freshMedia.Engine != "gpt-sovits" || freshMedia.Endpoint != "http://127.0.0.1:9880" || freshMedia.AutoReadReplies || freshMedia.ReadLocal) throw new Exception("Japanese media defaults invalid");
                         if (voice.IsSpeaking) throw new Exception("Smoke must never play audio");
-                        string report = "PASS\nWPF window initialized\nPNG loaded: " + pixelWidth + " x " + pixelHeight + "\nAlpha range: " + alphaMin + ".." + alphaMax + "; clickable pixels >= 32: " + clickPixels + "\nAlpha hit testing: opaque hit + transparent pass-through verified\nSettings parsed without mutation\nFocus start and completion passed\nSleep animation initialized\nControl panel opened and closed\nGPT chat window initialized; missing-key send blocked; draft preserved; password settings initialized\nSix pose states initialized with current bitmap alpha cache; " + motions.Status + "\nAnimation resources: wave=" + motions.HasWaveAnimation + "; blink=" + motions.HasBlinkAnimation + "; speak=" + motions.HasSpeechAnimation + "\nJapanese local lines mapped to all Chinese interaction lines\nJapanese voice preference initialized; audio switches default off\nSpeech and motion settings initialized; no audio was played\nSmoke made no external network requests; GPT requests only on explicit user send\nNo autostart; no admin requirement\n";
+                        string report = "PASS\nWPF window initialized\nPNG loaded: " + pixelWidth + " x " + pixelHeight + "\nAlpha range: " + alphaMin + ".." + alphaMax + "; clickable pixels >= 32: " + clickPixels + "\nAlpha hit testing: opaque hit + transparent pass-through verified\nSettings parsed without mutation\nFocus start and completion passed\nSleep animation initialized\nControl panel opened and closed\nGPT chat window initialized; missing-key send blocked; draft preserved; password settings initialized\nSix pose states initialized with current bitmap alpha cache; " + motions.Status + "\nAnimation resources: wave=" + motions.HasWaveAnimation + "; blink=" + motions.HasBlinkAnimation + "; speak=" + motions.HasSpeechAnimation + "\nJapanese local lines mapped to all Chinese interaction lines\nJapanese voice preference and release defaults verified\nSpeech and motion settings initialized; no audio was played\nSmoke made no external network requests; GPT requests only on explicit user send\nNo autostart; no admin requirement\n";
                         report += "Walk animation resource: " + motions.HasWalkAnimation + "; frames=" + motions.WalkFrameCount + "; fps=" + motions.WalkFramesPerSecond + "\nAutonomous idle delay and interruption verified\n"; report += "Happy animation resource: " + motions.HasHappyAnimation + "\nWave feet alignment and fixed body transforms verified\nWPF transition alpha verified at five progress values for normal and sleep opacity\n";
                         report += "QQ candidate selection in no-key chat: search -> 第一首 -> first displayed track exactly once; local roles only; mock network and playback\n";
                         VerifyDesktopShellSmoke();

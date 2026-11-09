@@ -24,6 +24,11 @@ namespace AnnaDesktopPet {
                 string config=Path.Combine(root,"qqmusic-path.txt");
                 File.WriteAllText(config,installed+Environment.NewLine);
                 Check(Resolve()==Path.GetFullPath(installed),"configured installation with spaces and Unicode");
+                Check(QqCatalog.SaveConfiguredPath(" \"" + installed + "\" ")==installed && QqCatalog.ReadConfiguredPath()==installed && Resolve()==installed,
+                    "a path pasted with quotes is saved and immediately used for launching");
+                bool saveRejected=false;
+                try { QqCatalog.SaveConfiguredPath(Path.Combine(root,"missing","QQMusic.exe")); } catch (InvalidOperationException) { saveRejected=true; }
+                Check(saveRejected && Resolve()==installed,"invalid edit preserves the previous working path");
                 File.WriteAllText(config,Path.Combine(root,"missing","QQMusic.exe"));Reject("missing executable");
                 string other=Path.Combine(root,"Other.exe");File.WriteAllText(other,"never executed");
                 File.WriteAllText(config,other);Reject("other executable rejected");

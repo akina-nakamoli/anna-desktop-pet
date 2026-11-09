@@ -1,6 +1,7 @@
-﻿param([switch]$SkipTests, [switch]$ReplaceExisting)
+param([switch]$SkipTests, [switch]$ReplaceExisting)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+$version = '1.41.4'
 . (Join-Path $PSScriptRoot 'Release-Validation.ps1')
 Push-Location $repo
 try {
@@ -18,9 +19,9 @@ try {
     foreach ($provider in @('GPT','DeepSeek')) {
         $destination = Join-Path $repo ('build\' + $provider)
         Remove-ReleaseDirectory $repo $destination
-        & (Join-Path $repo 'source\build.ps1') -Destination $destination -DeepSeek:($provider -eq 'DeepSeek')
+        & (Join-Path $repo 'source\build.ps1') -Destination $destination -PortableVoice -DeepSeek:($provider -eq 'DeepSeek')
         if ($LASTEXITCODE -ne 0) { throw "$provider build failed." }
-        Assert-ReleaseBuild $repo $destination '1.41.0'
+        Assert-ReleaseBuild $repo $destination $version
     }
     if (-not $SkipTests) {
         foreach ($test in @('run-engine-path-tests.ps1','run-qq-path-tests.ps1','run-context-tests.ps1','run-general-context-tests.ps1','run-conversation-store-tests.ps1','run-semantic-memory-tests.ps1','run-character-v4-tests.ps1','run-stream-client-tests.ps1','run-stream-speech-tests.ps1','run-stream-ui-tests.ps1')) {
@@ -30,7 +31,16 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "Offline regression failed: $test" }
         }
     }
-    & (Join-Path $PSScriptRoot 'Package-Release.ps1') -SkipBuild -ReplaceExisting:$ReplaceExisting
+    & (Join-Path $PSScriptRoot 'Package-Release.ps1') -Version $version -SkipBuild -ReplaceExisting:$ReplaceExisting
+    if (-not $SkipTests) {
+        $testRoot = Assert-ReleaseChild $repo (Join-Path $repo ('build/声音测试-' + [Guid]::NewGuid().ToString('N').Substring(0,8)))
+        New-Item -ItemType Directory -Path $testRoot | Out-Null
+        foreach ($provider in @('GPT','DeepSeek')) {
+            $zip = Join-Path $repo "releases/anna-desktop-pet-$provider-v$version.zip"
+            [IO.Compression.ZipFile]::ExtractToDirectory($zip, $testRoot)
+        }
+        & (Join-Path $repo 'source/run-stream-ui-tests.ps1') -ExtractedReleaseRoot $testRoot -PackageVersion $version
+    }
     Write-Output "PASS: both providers, publish inventory, original artwork hashes, and ZIP integrity ($($files.Count) source files)."
     if ($SkipTests) { Write-Output 'Offline regressions were explicitly skipped.' }
 } finally { Pop-Location }

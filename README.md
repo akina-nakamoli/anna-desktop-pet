@@ -1,4 +1,4 @@
-# 杏菜桌宠 v1.41.0
+# 杏菜桌宠 v1.41.4
 
 Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物设定、三套服装、聊天背景与衣帽间，并支持文字/语音聊天、长期记忆、音乐控制及日常提醒。项目与原作及配音演员无官方关联，素材使用范围见 [ASSETS.md](ASSETS.md)。
 
@@ -6,10 +6,10 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 在 GitHub **Releases** 下载一种版本：
 
-- `anna-desktop-pet-GPT-v1.41.0.zip`
-- `anna-desktop-pet-DeepSeek-v1.41.0.zip`
+- `anna-desktop-pet-GPT-v1.41.4.zip`
+- `anna-desktop-pet-DeepSeek-v1.41.4.zip`
 
-完整解压 ZIP，进入 `anna-desktop-pet-<版本>-v1.41.0/app`，双击 `AnnaDesktopPet.exe`。不要只取出 EXE；`assets`、`outfits`、`reference` 和 `voice-engine` 等目录需要与程序保存在一起。Windows 需要 .NET Framework 4.8。GPT 与 DeepSeek 一次选择一个运行。
+完整解压 ZIP，进入 `anna-desktop-pet-<版本>-v1.41.4/app`，双击 `AnnaDesktopPet.exe`。不要只取出 EXE；`assets`、`outfits`、`reference` 和 `voice-engine` 等目录需要与程序保存在一起。免编译包适用于 64 位 Windows，需 .NET Framework 4.8。GPT 与 DeepSeek 一次选择一个运行。
 
 首次使用在设置中填写自己的 API Key。两种服务分别使用自己的 Key 和账户额度，API 调用可能产生费用；没有 Key 时仍可打开桌宠及本地功能。
 
@@ -26,17 +26,17 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 ## 可选语音和音乐配置
 
-**本地日语配音和中文语音输入**需要另行安装完整 GPT-SoVITS Windows 整合包（包含 Python 与所需模型），本项目的 ZIP 不包含这些大型依赖。未配置时仍可文字聊天。
+**杏菜日语参考音色**使用本机 GPT-SoVITS。发布包已包含 `app/reference/anna.wav` 和对应台词。首次配置：
 
-在 `app/voice-engine` 打开 PowerShell，按自己的安装位置登记：
+1. 下载并完整解压 [GPT-SoVITS 官方 Windows 整合包](https://github.com/RVC-Boss/GPT-SoVITS#installation)，其中须有 `api_v2.py`、Python 运行环境和模型。
+2. 在桌宠打开「日语配音与动作」，选择「参考音色 · 本地 GPT-SoVITS」，点击「配置杏菜参考音色」并选中整合包中的 `api_v2.py`。
+3. 等桌宠检查环境、启动服务并播完试听。成功后自动保存配音，并开启聊天回复的日语配音。之后用已配置 API Key 的 GPT 或 DeepSeek 打字聊天。重新打开桌宠时会尝试启动登记过的本地服务。
 
-```powershell
-.\Register-VoiceEngine.ps1 -EnginePath 'D:\Apps\GPT-SoVITS'
-```
+默认地址为 `http://127.0.0.1:9880`。如需手动启动，可在 `app/voice-engine` 运行 `Register-VoiceEngine.ps1 -EnginePath <引擎目录>`，再运行 `Start-VoiceEngine.ps1`。如果没有兼容的 CUDA 环境，请按 GPT-SoVITS 官方说明准备 CPU 或适用的运行环境。发布包也提供可选的 Mei 离线声线和 Windows 日语声线。
 
-登记目录必须包含 `api_v2.py`；本地中文识别使用整合包的 `runtime/python.exe`。然后在桌宠配音设置中选择本地 GPT-SoVITS；默认服务地址为 `http://127.0.0.1:9880`，配套参考音频在 `app/reference/anna.wav`。首次模型加载需要等待，桌宠会尝试启动已登记的音色服务。也可以运行 `Start-VoiceEngine.ps1` 手动检查/启动。每位用户需登记自己的路径，发布包不携带作者电脑上的登记文件。 中文识别也兼容旧版 `ANNA_ASR_ENGINE` 环境变量及 `%LOCALAPPDATA%\AnnaDesktopPet\asr-engine-path.txt` 配置（优先于程序目录登记）；旧路径若已失效，需要更新或移除该旧配置。
+**中文语音输入**是独立选项。侧键说话需要另行准备中文识别环境（Python 中的 FunASR、soundfile、NumPy 和 Paraformer 模型）。在「语音输入与麦克风」选择该引擎后重启。使用打字聊天和听日语回复不需要中文识别模型。
 
-**QQ 音乐**需要电脑上安装客户端，正常登录并具备对应歌曲的播放权限。可先手动打开客户端；若要让桌宠启动它，在 `%LOCALAPPDATA%\AnnaDesktopPet\qqmusic-path.txt` 写入自己电脑 `QQMusic.exe` 的完整路径。客户端版本变化可能影响控制协议。在线点歌不要求提前下载音乐文件；本地歌曲默认从当前 Windows 用户的“音乐”目录查找。
+**QQ 音乐**需要电脑上安装客户端，正常登录并具备对应歌曲的播放权限。可先手动打开客户端。若要让桌宠在客户端关闭时自动打开它，进入「音乐控制」，粘贴或浏览选择本机的 `QQMusic.exe`，点击「保存路径」。旧版已保存的路径会自动显示。客户端版本变化可能影响控制协议。在线点歌不要求提前下载音乐文件；本地歌曲默认从当前 Windows 用户的“音乐”目录查找。
 
 ## 隐私与数据
 
@@ -61,6 +61,8 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 .\tools\Check-Release.ps1
 ```
 
-这会检查公开文件、编译两版、运行离线回归、比对程序素材与源码素材的 SHA256，并生成、验证两个 ZIP。不会调用收费模型或录制麦克风。输出位于 `releases/`，包括两个英文命名 ZIP 和 `SHA256SUMS-v1.41.0.txt`。重复生成同一版本时需显式加 `-ReplaceExisting`；其他版本及仓库外历史包不会删除。仅重新打包已验证构建可运行 `Package-Release.ps1 -SkipBuild`，但日常发布应先通过完整检查。
+构建发布包时会校验并缓存 Python 嵌入式运行时、NumPy 和 PyOpenJTalk Plus 三个公开依赖。首次构建需要联网，下载 ZIP 的用户可直接离线合成。各依赖许可证与 Mei 声线授权说明随包放在 app/ja-tts 内。
+
+这会检查公开文件、编译两版、运行离线回归、比对程序素材与源码素材的 SHA256，并生成、验证两个 ZIP。不会调用收费模型或录制麦克风。输出位于 `releases/`，包括两个英文命名 ZIP 和 `SHA256SUMS-v1.41.4.txt`。重复生成同一版本时需显式加 `-ReplaceExisting`；其他版本及仓库外历史包不会删除。仅重新打包已验证构建可运行 `Package-Release.ps1 -SkipBuild`，但日常发布应先通过完整检查。
 
 只将源码提交到 Git；ZIP 作为 GitHub Release 附件上传。代码按 [MIT](LICENSE) 提供；人物、图片、音频等素材不随代码许可证授权。

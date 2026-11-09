@@ -12,11 +12,25 @@ namespace AnnaDesktopPet {
         internal static void Load(){if(Program.Smoke)return;try{int device;if(Int32.TryParse(File.ReadAllText(FileName),out device)){LocalAsr.Device=-1;foreach(string name in Microphone.Devices())if(name.StartsWith(device+" · "))LocalAsr.Device=device;}}catch{}}
         internal static void Show(Func<string> status,Func<bool> recording){
             if(window!=null){window.Show();window.Activate();return;}
-            window=new Window{Title="杏菜 · 语音输入与麦克风",Width=440,Height=400};
-            var body=new StackPanel{Margin=new Thickness(20)};window.Content=body;
+            window=new Window{Title="杏菜 · 语音输入与麦克风",Width=480,Height=490};
+            var body=new StackPanel{Margin=new Thickness(20)};window.Content=new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
             body.Children.Add(new TextBlock{Text="选择说话用的麦克风",Margin=new Thickness(0,0,0,8)});
             string[] devices=Microphone.Devices();var combo=new ComboBox{ItemsSource=devices,SelectedIndex=0,Padding=new Thickness(5)};for(int i=1;i<devices.Length;i++)if(devices[i].StartsWith(LocalAsr.Device+" · "))combo.SelectedIndex=i;body.Children.Add(combo);
             var info=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,14,0,12)};body.Children.Add(info);
+            var engineButton=new Button{Content="选择中文语音识别引擎",Padding=new Thickness(10)};
+            body.Children.Add(engineButton);
+            var engineNotice=new TextBlock{Text="请选择含中文识别模型的引擎目录中的 api_v2.py。",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,6,0,12)};
+            body.Children.Add(engineNotice);
+            engineButton.Click+=delegate{
+                if(recording() || Testing){engineNotice.Text="请先结束录音、识别或麦克风测试。";return;}
+                var dialog=new Microsoft.Win32.OpenFileDialog{Title="选择中文语音识别引擎的 api_v2.py",Filter="引擎入口 (api_v2.py)|api_v2.py",CheckFileExists=true};
+                if(dialog.ShowDialog(window)!=true)return;
+                try{
+                    AsrWorker.RegisterInputEngine(Path.GetDirectoryName(dialog.FileName));
+                    engineNotice.Text="已保存中文识别引擎。请退出并重新打开桌宠，再按住侧键说话。";
+                }catch(Exception ex){engineNotice.Text=ex.Message;}
+            };
+
             var meter=new ProgressBar{Minimum=0,Maximum=100,Height=12};body.Children.Add(meter);
             var label=new TextBlock{Text="音量指示：尚未开启测试",Margin=new Thickness(0,6,0,12)};body.Children.Add(label);
             var toggle=new Button{Content="测试麦克风（只显示音量，不保存录音）",Padding=new Thickness(10)};body.Children.Add(toggle);
