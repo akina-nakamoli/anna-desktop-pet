@@ -10,5 +10,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build both variants and check publish files
-        shell: powershell
+        shell: pwsh
         run: .\tools\Check-Release.ps1

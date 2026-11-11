@@ -1,4 +1,4 @@
-param([string]$Destination = '', [switch]$DeepSeek, [switch]$PortableVoice)
+﻿param([string]$Destination = '', [switch]$DeepSeek, [switch]$PortableVoice)
 if ([string]::IsNullOrWhiteSpace($Destination)) { $Destination = Join-Path (Split-Path $PSScriptRoot -Parent) ('build\' + @('GPT','DeepSeek')[[int][bool]$DeepSeek]) }
 $ErrorActionPreference = 'Stop'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
