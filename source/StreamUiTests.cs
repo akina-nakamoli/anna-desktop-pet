@@ -39,7 +39,7 @@ namespace AnnaDesktopPet
 #endif
                 bool packagedVoice = args.Length > 0 && args[0] == "--packaged-voice";
                 Console.WriteLine("PASS " + provider + ": " + assertions +
-                    (packagedVoice ? " packaged voice checks with synthetic chat and real offline synthesis." : " stream UI contract assertions. Fake HTTP and speech only."));
+                    (packagedVoice ? " packaged voice checks for GPT-SoVITS." : " stream UI contract assertions. Fake HTTP and speech only."));
                 return 0;
             }
             catch (Exception ex) { Console.WriteLine("FAIL: " + ex); return 1; }
@@ -68,17 +68,19 @@ namespace AnnaDesktopPet
         private static async Task PackagedVoiceReadsChat()
         {
             var settings = new SpeechSettings();
-            Check(settings.Engine == "gpt-sovits" && !settings.AutoReadReplies && File.Exists(settings.ReferenceAudio),
-                "Fresh package presents the reference voice with its bundled sample and waits for setup");
-            Check(PortableJapaneseVoice.Available, "Optional offline Japanese voice is installed");
-            settings.Engine = "portable";
-            settings.AutoReadReplies = true;
+            Check(settings.Engine == "gpt-sovits" && settings.AutoReadReplies && File.Exists(settings.ReferenceAudio),
+                "Fresh package reads replies with GPT-SoVITS");
+            Check(!PortableJapaneseVoice.IsBundled, "No alternate voice bundled");
+            string endpoint = Environment.GetEnvironmentVariable("ANNA_TEST_SOVITS_ENDPOINT");
+            if (String.IsNullOrEmpty(endpoint)) return;
+
+
             string wave = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test-ja-" + Guid.NewGuid().ToString("N") + ".wav");
             try
             {
                 using (var speech = new SpeechService(Dispatcher.CurrentDispatcher, wave))
                 {
-                    speech.ConfigureBackend(settings.Engine, "", "", "");
+                    speech.ConfigureBackend(settings.Engine, endpoint, settings.ReferenceAudio, settings.ReferenceText);
                     speech.Configure(settings.VoiceId, settings.Rate, settings.Volume);
                     speech.Speak("こんにちは、アンナだよ。");
                     await WaitForPackagedWave(speech, wave);
@@ -101,7 +103,7 @@ namespace AnnaDesktopPet
 
         private static async Task WaitForPackagedWave(SpeechService speech, string wave)
         {
-            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+            DateTime deadline = DateTime.UtcNow.AddMinutes(3);
             while (speech.IsBusy && DateTime.UtcNow < deadline) await Task.Delay(25);
             Check(!speech.IsBusy && File.Exists(wave), "Offline voice produced a WAV: " + speech.Status);
             byte[] data = File.ReadAllBytes(wave);

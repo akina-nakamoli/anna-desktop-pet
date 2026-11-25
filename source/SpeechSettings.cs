@@ -14,11 +14,11 @@ namespace AnnaDesktopPet
         public string VoiceLanguage = "ja";
         public int Rate = 0;
         public int Volume = 75;
-        public bool AutoReadReplies = false;
+        public bool AutoReadReplies = true;
         public bool ReadLocal = false;
         public bool MotionsEnabled = true;
         public bool AutonomousEnabled = true;
-        private static string FileName { get { return Path.Combine(Program.DataDir, PortableJapaneseVoice.IsBundled ? "media-settings-portable.ini" : "media-settings.ini"); } }
+        private static string FileName { get { return Path.Combine(Program.DataDir, "media-settings-portable.ini"); } }
         private static string DefaultReference()
         {
             string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "reference", "anna.wav");
@@ -29,14 +29,21 @@ namespace AnnaDesktopPet
             SpeechSettings s = new SpeechSettings();
             try
             {
-                if (!File.Exists(FileName)) return s;
-                foreach (string line in File.ReadAllLines(FileName))
+                string path = File.Exists(FileName) ? FileName : Path.Combine(Program.DataDir, "media-settings.ini");
+                if (!File.Exists(path)) return s;
+                foreach (string line in File.ReadAllLines(path))
                 {
                     int split = line.IndexOf('='); if (split < 0) continue;
                     string key = line.Substring(0, split), value = line.Substring(split + 1); int n; bool flag;
-                    if (key == "engine") s.Engine = value == "windows" || value == "portable" ? value : "gpt-sovits";
                     if (key == "endpoint") s.Endpoint = value;
-                    if (key == "reference_audio") s.ReferenceAudio = value == "@bundled-reference" ? DefaultReference() : value;
+                    if (key == "reference_audio")
+                    {
+                        bool missingReleaseSample = !File.Exists(value) &&
+                            System.Text.RegularExpressions.Regex.IsMatch(value.Replace('/', '\\'),
+                                @"\\anna-desktop-pet-(GPT|DeepSeek)-v[0-9.]+(?:-BundledVoice)?\\app\\reference\\anna\.wav$",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        s.ReferenceAudio = value == "@bundled-reference" || missingReleaseSample ? DefaultReference() : value;
+                    }
                     if (key == "reference_text") s.ReferenceText = value;
                     if (key == "voice") s.VoiceId = value;
                     if (key == "voice_language") s.VoiceLanguage = "ja";

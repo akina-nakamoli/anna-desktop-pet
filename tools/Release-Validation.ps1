@@ -69,13 +69,11 @@ function Assert-NoPrivateReleaseFile([string]$Relative) {
 
 function Assert-ReleaseBuild([string]$Repo, [string]$Directory, [string]$Version) {
     $Directory = Assert-ReleaseChild $Repo $Directory
-    foreach ($required in @('AnnaDesktopPet.exe','AnnaDesktopPet.exe.config','local_asr.py','MusicSession.ps1','voice-engine\Start-VoiceEngine.ps1','voice-engine\Register-VoiceEngine.ps1','voice-engine\check_engine.py')) {
+    foreach ($required in @('AnnaDesktopPet.exe','AnnaDesktopPet.exe.config','local_asr.py','MusicSession.ps1','voice-engine\Start-VoiceEngine.ps1','voice-engine\Register-VoiceEngine.ps1','voice-engine\Install-ReferenceVoice.ps1','voice-engine\check_engine.py')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Directory $required) -PathType Leaf)) { throw "Incomplete build: $Directory/$required" }
     }
     $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $Directory 'AnnaDesktopPet.exe')).FileVersion
-    foreach ($required in @('tts.py','python.exe','LICENSE.txt','pyopenjtalk/dictionary/sys.dic','pyopenjtalk/dictionary/COPYING','pyopenjtalk/htsvoice/mei_normal.htsvoice','pyopenjtalk/htsvoice/LICENSE_mei_normal.htsvoice')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $Directory ('ja-tts/' + $required)) -PathType Leaf)) { throw "Missing portable Japanese voice file: $required" }
-    }
+    if (Test-Path (Join-Path $Directory 'ja-tts')) { throw 'Unexpected alternate voice.' }
     if ($fileVersion -ne ($Version + '.0')) { throw "Wrong program version: $fileVersion; expected $Version.0" }
     foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Recurse) {
         Assert-NoPrivateReleaseFile ($file.FullName.Substring($Directory.Length).TrimStart('\','/').Replace('\','/'))

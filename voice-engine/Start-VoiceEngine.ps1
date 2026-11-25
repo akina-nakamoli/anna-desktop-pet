@@ -34,6 +34,13 @@ $PythonPath = (Resolve-Path -LiteralPath $PythonPath).Path
 $configPath = Join-Path $EnginePath 'GPT_SoVITS\configs\tts_infer.yaml'
 if (-not (Test-Path -LiteralPath $configPath)) { throw 'Missing GPT_SoVITS/configs/tts_infer.yaml. Complete the official engine installation first.' }
 
+if (Test-Path -LiteralPath (Join-Path $EnginePath 'anna-japanese-runtime.txt')) {
+    $env:HF_HUB_OFFLINE = '1'
+    $env:TRANSFORMERS_OFFLINE = '1'
+    $env:NLTK_DATA = Join-Path $EnginePath 'runtime/nltk_data'
+    $env:PYTHONNOUSERSITE = '1'
+    $env:Path = $EnginePath + ';' + $env:Path
+}
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 $checkScript = Join-Path $PSScriptRoot 'check_engine.py'

@@ -1,7 +1,7 @@
 ﻿param([switch]$SkipTests, [switch]$ReplaceExisting)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$version = '1.42.0'
+$version = '1.42.2'
 . (Join-Path $PSScriptRoot 'Release-Validation.ps1')
 Push-Location $repo
 try {
@@ -19,7 +19,7 @@ try {
     foreach ($provider in @('GPT','DeepSeek')) {
         $destination = Join-Path $repo ('build\' + $provider)
         Remove-ReleaseDirectory $repo $destination
-        & (Join-Path $repo 'source\build.ps1') -Destination $destination -PortableVoice -DeepSeek:($provider -eq 'DeepSeek')
+        & (Join-Path $repo 'source\build.ps1') -Destination $destination -DeepSeek:($provider -eq 'DeepSeek')
         if ($LASTEXITCODE -ne 0) { throw "$provider build failed." }
         Assert-ReleaseBuild $repo $destination $version
     }

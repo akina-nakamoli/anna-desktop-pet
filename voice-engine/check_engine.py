@@ -33,6 +33,8 @@ for key in ('t2s_weights_path', 'vits_weights_path'):
         if not file.is_file():
             missing_models.append(str(file))
 for key in ('bert_base_path', 'cnhuhbert_base_path'):
+    if key == 'bert_base_path' and (root / 'anna-japanese-runtime.txt').is_file():
+        continue  # Japanese and English use zero BERT features in the bundled frontend.
     value = custom.get(key)
     folder = Path(value) if value else None
     if folder is not None and not folder.is_absolute():

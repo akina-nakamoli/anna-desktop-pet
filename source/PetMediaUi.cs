@@ -13,10 +13,8 @@ namespace AnnaDesktopPet
         private readonly SpeechSettings settings;
         private readonly Action apply;
         private readonly Action<string> play;
-        private readonly ComboBox voices;
-        private readonly ComboBox engine;
         private readonly TextBox endpoint, referenceAudio, referenceText;
-        private readonly StackPanel cloneControls, windowsControls;
+        private readonly StackPanel cloneControls;
         private readonly Button sample;
         private readonly Slider rate, volume;
         private readonly CheckBox autoRead, localRead, animate;
@@ -39,15 +37,11 @@ namespace AnnaDesktopPet
             Grid columns = new Grid(); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(205) });
             Border speechCard = Card(); speechCard.Margin = new Thickness(0, 0, 14, 0); StackPanel controls = new StackPanel(); speechCard.Child = controls; columns.Children.Add(speechCard);
             TextBlock speechHeading = GptUi.Text("日语配音来源", 16, GptChatWindow.PanelText); speechHeading.FontWeight = FontWeights.SemiBold; controls.Children.Add(speechHeading);
-            engine = new ComboBox { FontSize = 12, Padding = new Thickness(7), MinHeight = 34, Margin = new Thickness(0, 12, 0, 10) };
-            engine.Items.Add(new ComboBoxItem { Content = "参考音色 · 本地 GPT-SoVITS", Tag = "gpt-sovits" });
-            engine.Items.Add(new ComboBoxItem { Content = "Windows 日语声线 · 系统合成", Tag = "windows" });
-            if (PortableJapaneseVoice.IsBundled) engine.Items.Add(new ComboBoxItem { Content = "离线日语声线", Tag = "portable" });
-            engine.SelectedIndex = settings.Engine == "portable" && engine.Items.Count == 3 ? 2 : settings.Engine == "windows" ? 1 : 0; controls.Children.Add(engine);
+            controls.Children.Add(GptUi.Text("杏菜参考音色 · 本地 GPT-SoVITS", 14, GptChatWindow.PanelText));
             cloneControls = new StackPanel(); controls.Children.Add(cloneControls);
             Button configureReference = StyledButton("配置杏菜参考音色", ConfigureReference, true);
             cloneControls.Children.Add(configureReference);
-            referenceSetupStatus = GptUi.Text("先解压 GPT-SoVITS Windows 整合包，再选择里面的 api_v2.py。", 11, GptUi.Muted);
+            referenceSetupStatus = GptUi.Text(System.IO.File.Exists(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "voice-engine", "GPT-SoVITS", "anna-japanese-runtime.txt")) ? "已内置杏菜日语配音，打开桌宠时会自动加载。可点击「生成并试听」检查声音。" : "首次使用请运行发布包里的「首次安装杏菜配音.cmd」。已有引擎可在这里选择 api_v2.py。", 11, GptUi.Muted);
             referenceSetupStatus.TextWrapping = TextWrapping.Wrap;
             referenceSetupStatus.Margin = new Thickness(0, 6, 0, 5);
             cloneControls.Children.Add(referenceSetupStatus);
@@ -57,21 +51,12 @@ namespace AnnaDesktopPet
             referenceAudio = Input(settings.ReferenceAudio); audioRow.Children.Add(referenceAudio); cloneControls.Children.Add(audioRow);
             Label(cloneControls, "参考音频中的日语原文"); referenceText = Input(settings.ReferenceText); referenceText.AcceptsReturn = true; referenceText.TextWrapping = TextWrapping.Wrap; referenceText.MinHeight = 65; cloneControls.Children.Add(referenceText);
             TextBlock cloneNote = GptUi.Text("先启动本地音色服务，再点击试听。配套样音为处理后的候选，仍需试听核对；参考台词须与音频一致。", 11, GptChatWindow.PanelQuiet); cloneNote.LineHeight = 18; cloneNote.Margin = new Thickness(0, 8, 0, 0); cloneControls.Children.Add(cloneNote);
-            windowsControls = new StackPanel(); controls.Children.Add(windowsControls);
-            TextBlock voiceHint = GptUi.Text("日语语音", 12, GptChatWindow.PanelQuiet); voiceHint.Margin = new Thickness(0, 7, 0, 7); windowsControls.Children.Add(voiceHint);
-            voices = new ComboBox { FontSize = 12, Padding = new Thickness(7), MinHeight = 34 };
-            foreach (SpeechVoiceInfo v in voice.Voices) if ((v.Language ?? "").StartsWith("ja", StringComparison.OrdinalIgnoreCase)) voices.Items.Add(new ComboBoxItem { Content = v.Name + "  ·  " + v.Language, Tag = v.Id });
-            if (voices.Items.Count == 0) voices.Items.Add(new ComboBoxItem { Content = "未找到 Windows 日语语音", Tag = "" });
-            voices.SelectedIndex = 0;
-            foreach (ComboBoxItem item in voices.Items) if ((string)item.Tag == voice.SelectedVoiceId) { voices.SelectedItem = item; break; }
-            voices.IsEnabled = voice.Voices.Count > 0; windowsControls.Children.Add(voices);
-            TextBlock installedNote = GptUi.Text(voice.Voices.Count == 0 ? "未找到可用的 Windows 日语语音。" : "此选项使用系统合成声线，不使用参考音频。", 11, GptChatWindow.PanelQuiet); installedNote.LineHeight = 18; installedNote.Margin = new Thickness(0, 8, 0, 0); windowsControls.Children.Add(installedNote);
 
             TextBlock rateLabel = GptUi.Text("语速  " + settings.Rate.ToString("+0;-0;0"), 12, GptChatWindow.PanelQuiet); rateLabel.Margin = new Thickness(0, 15, 0, 7); controls.Children.Add(rateLabel);
             rate = new Slider { Minimum = -5, Maximum = 5, TickFrequency = 1, IsSnapToTickEnabled = true, Value = settings.Rate }; rate.ValueChanged += delegate { rateLabel.Text = "语速  " + ((int)rate.Value).ToString("+0;-0;0"); }; controls.Children.Add(rate);
             TextBlock volumeLabel = GptUi.Text("音量  " + settings.Volume + "%", 12, GptChatWindow.PanelQuiet); volumeLabel.Margin = new Thickness(0, 13, 0, 7); controls.Children.Add(volumeLabel);
             volume = new Slider { Minimum = 0, Maximum = 100, TickFrequency = 5, IsSnapToTickEnabled = true, Value = settings.Volume }; volume.ValueChanged += delegate { volumeLabel.Text = "音量  " + (int)volume.Value + "%"; }; controls.Children.Add(volume);
-            autoRead = Check("自动用日语配音 GPT 回复", settings.AutoReadReplies); autoRead.Margin = new Thickness(0, 18, 0, 9); controls.Children.Add(autoRead);
+            autoRead = Check("自动用日语配音聊天回复", settings.AutoReadReplies); autoRead.Margin = new Thickness(0, 18, 0, 9); controls.Children.Add(autoRead);
             localRead = Check("互动台词日语配音", settings.ReadLocal); localRead.Margin = new Thickness(0, 0, 0, 16); controls.Children.Add(localRead);
             WrapPanel samples = new WrapPanel();
             sample = StyledButton("生成并试听", Sample, true); samples.Children.Add(sample);
@@ -123,7 +108,7 @@ namespace AnnaDesktopPet
             TextBlock explanation = GptUi.Text("参考音色在本机生成。开启回复配音后，聊天模型会同时生成中文回复和日语台词。", 11, GptChatWindow.PanelQuiet); explanation.LineHeight = 19; explanation.Margin = new Thickness(0, 15, 0, 12); body.Children.Add(explanation);
             Button save = StyledButton("保存日语配音与动作设置", Save, true); save.HorizontalAlignment = HorizontalAlignment.Stretch; body.Children.Add(save);
             status = GptUi.Text(voice.Status, 11, GptChatWindow.PanelQuiet); status.LineHeight = 18; status.Margin = new Thickness(0, 9, 0, 0); body.Children.Add(status);
-            engine.SelectionChanged += delegate { UpdateEngineControls(); }; UpdateEngineControls();
+            sample.Content = "生成并试听";
             voice.StatusChanged += VoiceStatus;
             Closed += delegate { closed = true; if (referenceSetup != null) referenceSetup.Cancel(); voice.StatusChanged -= VoiceStatus; voice.Stop(); voice.ConfigureBackend(settings.Engine, settings.Endpoint, settings.ReferenceAudio, settings.ReferenceText); voice.Configure(settings.VoiceId, settings.Rate, settings.Volume); };
             PanelTheme.Apply(this, "日语配音与动作", "VOICE & MOTION", false);
@@ -137,15 +122,6 @@ namespace AnnaDesktopPet
         private static CheckBox Check(string label, bool value) { return new CheckBox { Content = GptUi.Text(label, 12, GptChatWindow.PanelText), IsChecked = value }; }
         private static void Label(Panel panel, string text) { TextBlock label = GptUi.Text(text, 11, GptChatWindow.PanelQuiet); label.Margin = new Thickness(0, 9, 0, 6); panel.Children.Add(label); }
         private static TextBox Input(string value) { return new TextBox { Text = value ?? "", FontSize = 12, Padding = new Thickness(7), MinHeight = 32, BorderBrush = PanelPalette.Line, BorderThickness = new Thickness(1) }; }
-        private string ChosenEngine() { return (string)((ComboBoxItem)engine.SelectedItem).Tag; }
-        private void UpdateEngineControls()
-        {
-            bool clone = ChosenEngine() == "gpt-sovits";
-            cloneControls.Visibility = clone ? Visibility.Visible : Visibility.Collapsed;
-            windowsControls.Visibility = ChosenEngine() == "windows" ? Visibility.Visible : Visibility.Collapsed;
-            sample.IsEnabled = clone || ChosenEngine() == "portable" || voice.Voices.Count > 0;
-            sample.Content = clone ? "生成并试听" : ChosenEngine() == "portable" ? "试听离线声线" : "试听系统声音";
-        }
         private async void ConfigureReference()
         {
             if (Program.Smoke || referenceSetup != null) return;
@@ -162,7 +138,7 @@ namespace AnnaDesktopPet
             string address = endpoint.Text.Trim();
             var cancellation = new CancellationTokenSource();
             referenceSetup = cancellation;
-            cloneControls.IsEnabled = engine.IsEnabled = sample.IsEnabled = false;
+            cloneControls.IsEnabled = sample.IsEnabled = false;
             bool saved = false;
             try
             {
@@ -201,15 +177,15 @@ namespace AnnaDesktopPet
                 cancellation.Dispose();
                 if (!closed)
                 {
-                    cloneControls.IsEnabled = engine.IsEnabled = true;
-                    UpdateEngineControls();
+                    cloneControls.IsEnabled = true;
+                    sample.IsEnabled = true;
                     if (!saved) apply();
                 }
             }
         }
         private SpeechSettings ReadSettings()
         {
-            return new SpeechSettings { Engine = ChosenEngine(), Endpoint = endpoint.Text.Trim(), ReferenceAudio = referenceAudio.Text.Trim(), ReferenceText = referenceText.Text.Trim().Replace("\r", " ").Replace("\n", " "), VoiceId = ChosenVoice(), VoiceLanguage = "ja", Rate = (int)rate.Value, Volume = (int)volume.Value, AutoReadReplies = autoRead.IsChecked == true, ReadLocal = localRead.IsChecked == true, MotionsEnabled = animate.IsChecked == true, AutonomousEnabled = settings.AutonomousEnabled };
+            return new SpeechSettings { Engine = "gpt-sovits", Endpoint = endpoint.Text.Trim(), ReferenceAudio = referenceAudio.Text.Trim(), ReferenceText = referenceText.Text.Trim().Replace("\r", " ").Replace("\n", " "), VoiceId = "", VoiceLanguage = "ja", Rate = (int)rate.Value, Volume = (int)volume.Value, AutoReadReplies = autoRead.IsChecked == true, ReadLocal = localRead.IsChecked == true, MotionsEnabled = animate.IsChecked == true, AutonomousEnabled = settings.AutonomousEnabled };
         }
 
         private void SaveSettings(SpeechSettings chosen)
@@ -239,18 +215,17 @@ namespace AnnaDesktopPet
                 if (!settings.MotionsEnabled) status.Text = "动作尚未开启。勾选「开启动作与呼吸动画」并保存后，桌宠会跟随切换。";
             }, false); button.FontSize = 11; button.Padding = new Thickness(8, 6, 8, 6); button.Margin = new Thickness(0, 0, 5, 5); buttons.Children.Add(button);
         }
-        private string ChosenVoice() { ComboBoxItem item = voices.SelectedItem as ComboBoxItem; return item == null ? "" : (string)item.Tag; }
         private void Sample()
         {
             if (Program.Smoke || referenceSetup != null) return;
-            voice.ConfigureBackend(ChosenEngine(), endpoint.Text.Trim(), referenceAudio.Text.Trim(), referenceText.Text.Trim());
-            voice.Configure(ChosenVoice(), (int)rate.Value, (int)volume.Value);
+            voice.ConfigureBackend("gpt-sovits", endpoint.Text.Trim(), referenceAudio.Text.Trim(), referenceText.Text.Trim());
+            voice.Configure("", (int)rate.Value, (int)volume.Value);
             voice.Speak("こんにちは、アンナだよ。今日も一緒に頑張ろうね。お腹がすいたら、一緒に何か食べようね。");
         }
         private void Save()
         {
             if (referenceSetup != null) return;
-            SpeechSettings chosen = new SpeechSettings { Engine = ChosenEngine(), Endpoint = endpoint.Text.Trim(), ReferenceAudio = referenceAudio.Text.Trim(), ReferenceText = referenceText.Text.Trim().Replace("\r", " ").Replace("\n", " "), VoiceId = ChosenVoice(), VoiceLanguage = "ja", Rate = (int)rate.Value, Volume = (int)volume.Value, AutoReadReplies = autoRead.IsChecked == true, ReadLocal = localRead.IsChecked == true, MotionsEnabled = animate.IsChecked == true };
+            SpeechSettings chosen = new SpeechSettings { Engine = "gpt-sovits", Endpoint = endpoint.Text.Trim(), ReferenceAudio = referenceAudio.Text.Trim(), ReferenceText = referenceText.Text.Trim().Replace("\r", " ").Replace("\n", " "), VoiceId = "", VoiceLanguage = "ja", Rate = (int)rate.Value, Volume = (int)volume.Value, AutoReadReplies = autoRead.IsChecked == true, ReadLocal = localRead.IsChecked == true, MotionsEnabled = animate.IsChecked == true };
             try
             {
                 chosen.AutonomousEnabled = settings.AutonomousEnabled;
@@ -272,14 +247,7 @@ namespace AnnaDesktopPet
         private void VoiceStatus(string text) { if (!closed) status.Text = text; }
         internal void VerifySmoke()
         {
-            if (voices.Items.Count < 1 || poseImage.Source == null || autoRead == null || localRead == null || animate == null) throw new InvalidOperationException("语音与动作界面初始化失败。");
-            if (engine.Items.Count != (PortableJapaneseVoice.IsBundled ? 3 : 2) || referenceText == null || endpoint == null || referenceAudio == null) throw new InvalidOperationException("参考音色设置初始化失败。");
-            if (cloneControls.Visibility != (ChosenEngine() == "gpt-sovits" ? Visibility.Visible : Visibility.Collapsed)) throw new InvalidOperationException("配音来源切换失败。");
-            int previous = engine.SelectedIndex; engine.SelectedIndex = 1;
-            if (cloneControls.Visibility != Visibility.Collapsed || windowsControls.Visibility != Visibility.Visible) throw new InvalidOperationException("系统声线面板切换失败。");
-            engine.SelectedIndex = 0;
-            if (cloneControls.Visibility != Visibility.Visible || windowsControls.Visibility != Visibility.Collapsed || !sample.IsEnabled) throw new InvalidOperationException("参考音色面板切换失败。");
-            engine.SelectedIndex = previous;
+            if (poseImage.Source == null || autoRead == null || localRead == null || animate == null) throw new InvalidOperationException("语音与动作界面初始化失败。");
             if (voice.IsSpeaking) throw new InvalidOperationException("Smoke 不应播放音频。");
         }
     }

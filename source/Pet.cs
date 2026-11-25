@@ -17,8 +17,8 @@ using System.Windows.Threading;
 
 [assembly: AssemblyTitle("杏菜桌宠 · 参考音色")]
 [assembly: AssemblyDescription("杏菜桌面伙伴，支持中文 GPT 对话、日语配音与人物动作。")]
-[assembly: AssemblyVersion("1.42.0.0")]
-[assembly: AssemblyFileVersion("1.42.0.0")]
+[assembly: AssemblyVersion("1.42.2.0")]
+[assembly: AssemblyFileVersion("1.42.2.0")]
 
 namespace AnnaDesktopPet
 {

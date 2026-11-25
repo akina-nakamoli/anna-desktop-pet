@@ -28,7 +28,7 @@ foreach ($provider in @('GPT', 'DeepSeek')) {
     if ($ExtractedReleaseRoot) {
         if ($PackageVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'PackageVersion is required for an extracted release test.' }
         $testFolder = Join-Path $ExtractedReleaseRoot "anna-desktop-pet-$provider-v$PackageVersion/app"
-        if (-not (Test-Path -LiteralPath (Join-Path $testFolder 'ja-tts/tts.py'))) { throw "Missing extracted $provider voice bundle." }
+        if (-not (Test-Path -LiteralPath (Join-Path $testFolder 'reference/anna.wav'))) { throw "Missing extracted $provider voice bundle." }
         $scenario = @('--packaged-voice')
     }
     $testName = "StreamUiTests-$provider"

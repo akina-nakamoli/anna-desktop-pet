@@ -75,6 +75,20 @@ namespace AnnaDesktopPet
                 request.Content = new StringContent(CreateRequest(text, referenceAudio, referenceText, rate), Encoding.UTF8, "application/json");
                 try
                 {
+                    if (testHandler == null && File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "voice-engine", "GPT-SoVITS", "anna-japanese-runtime.txt")))
+                    {
+                        // The first reply may arrive while the bundled model is still loading.
+                        for (;;)
+                        {
+                            timeout.Token.ThrowIfCancellationRequested();
+                            using (var probe = new System.Net.Sockets.TcpClient())
+                            {
+                                try { await probe.ConnectAsync(request.RequestUri.Host, request.RequestUri.Port).ConfigureAwait(false); break; }
+                                catch (System.Net.Sockets.SocketException) { }
+                            }
+                            await Task.Delay(500, timeout.Token).ConfigureAwait(false);
+                        }
+                    }
                     using (HttpResponseMessage response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false))
                     using (timeout.Token.Register(delegate { response.Dispose(); }))
                     {

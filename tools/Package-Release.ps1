@@ -1,6 +1,6 @@
 ﻿param(
     [string]$Output = (Join-Path (Split-Path $PSScriptRoot -Parent) 'releases'),
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.42.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.42.2',
     [switch]$SkipBuild,
     [switch]$ReplaceExisting
 )
@@ -24,9 +24,9 @@ foreach ($variant in @(@{Name='GPT'; Args=@{}}, @{Name='DeepSeek'; Args=@{DeepSe
     if (-not $SkipBuild) {
         Remove-ReleaseDirectory $repo $destination
         if ($variant.Args.DeepSeek) {
-            & (Join-Path $repo 'source/build.ps1') -Destination $destination -PortableVoice -DeepSeek
+            & (Join-Path $repo 'source/build.ps1') -Destination $destination -DeepSeek
         } else {
-            & (Join-Path $repo 'source/build.ps1') -Destination $destination -PortableVoice
+            & (Join-Path $repo 'source/build.ps1') -Destination $destination
         }
         if ($LASTEXITCODE -ne 0) { throw "Build failed: $($variant.Name)" }
     }
@@ -37,6 +37,7 @@ foreach ($variant in @(@{Name='GPT'; Args=@{}}, @{Name='DeepSeek'; Args=@{DeepSe
     New-Item -ItemType Directory -Force -Path $package | Out-Null
     Copy-Item -LiteralPath $destination -Destination (Join-Path $package 'app') -Recurse
     Copy-Item -LiteralPath (Join-Path $repo 'README.md'), (Join-Path $repo 'ASSETS.md'), (Join-Path $repo 'LICENSE') -Destination $package
+    Copy-Item -LiteralPath (Join-Path $repo "tools/首次安装杏菜配音.cmd") -Destination $package
     $zip = Join-Path $Output ($packageName + '.zip')
     $null = Assert-ReleaseChild $repo $zip
     if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }

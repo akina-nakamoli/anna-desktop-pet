@@ -1,4 +1,4 @@
-﻿# anna-desktop-pet v1.42.0
+# anna-desktop-pet v1.42.2
 
 Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物设定、四套服装（校服、水手服、幽灵娘、海獭服）、聊天背景与衣帽间，并支持文字/语音聊天、长期记忆、音乐控制及日常提醒。项目与原作及配音演员无官方关联，素材使用范围见 [ASSETS.md](ASSETS.md)。
 
@@ -6,10 +6,10 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 在 GitHub **Releases** 下载一种版本：
 
-- `anna-desktop-pet-GPT-v1.42.0.zip`
-- `anna-desktop-pet-DeepSeek-v1.42.0.zip`
+- `anna-desktop-pet-GPT-v1.42.2-BundledVoice-RefFix.zip`
+- `anna-desktop-pet-DeepSeek-v1.42.2-BundledVoice-RefFix.zip`
 
-完整解压 ZIP，进入 `anna-desktop-pet-<版本>-v1.42.0/app`，双击 `AnnaDesktopPet.exe`。不要只取出 EXE；`assets`、`outfits`、`reference` 和 `voice-engine` 等目录需要与程序保存在一起。免编译包适用于 64 位 Windows，需 .NET Framework 4.8。GPT 与 DeepSeek 一次选择一个运行。
+完整解压 ZIP，进入解压目录的 `app` 文件夹，双击 `AnnaDesktopPet.exe`。不要只取出 EXE；`assets`、`outfits`、`reference` 和 `voice-engine` 等目录需要与程序保存在一起。免编译包适用于 64 位 Windows，需 .NET Framework 4.8。GPT 与 DeepSeek 一次选择一个运行。
 
 首次使用在设置中填写自己的 API Key。两种服务分别使用自己的 Key 和账户额度，API 调用可能产生费用；没有 Key 时仍可打开桌宠及本地功能。
 
@@ -26,13 +26,17 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 ## 可选语音和音乐配置
 
+文件名含有 `BundledVoice` 的版本已内置杏菜日语推理引擎，完整解压后打开 `app/AnnaDesktopPet.exe` 即可。首次聊天时程序会等待模型加载。
+
+对于没有内置配音的旧包，首次使用请双击「首次安装杏菜配音.cmd」。它会下载约 7.6 GiB 的 GPT-SoVITS 整合包并登记引擎。成功后启动桌宠，聊天回复默认使用杏菜参考音色。已有引擎也可按以下步骤登记。
+
 **杏菜日语参考音色**使用本机 GPT-SoVITS。发布包已包含 `app/reference/anna.wav` 和对应台词。首次配置：
 
 1. 下载并完整解压 [GPT-SoVITS 官方 Windows 整合包](https://github.com/RVC-Boss/GPT-SoVITS#installation)，其中须有 `api_v2.py`、Python 运行环境和模型。
 2. 在桌宠打开「日语配音与动作」，选择「参考音色 · 本地 GPT-SoVITS」，点击「配置杏菜参考音色」并选中整合包中的 `api_v2.py`。
 3. 等桌宠检查环境、启动服务并播完试听。成功后自动保存配音，并开启聊天回复的日语配音。之后用已配置 API Key 的 GPT 或 DeepSeek 打字聊天。重新打开桌宠时会尝试启动登记过的本地服务。
 
-默认地址为 `http://127.0.0.1:9880`。如需手动启动，可在 `app/voice-engine` 运行 `Register-VoiceEngine.ps1 -EnginePath <引擎目录>`，再运行 `Start-VoiceEngine.ps1`。如果没有兼容的 CUDA 环境，请按 GPT-SoVITS 官方说明准备 CPU 或适用的运行环境。发布包也提供可选的 Mei 离线声线和 Windows 日语声线。
+默认地址为 `http://127.0.0.1:9880`。如需手动启动，可在 `app/voice-engine` 运行 `Register-VoiceEngine.ps1 -EnginePath <引擎目录>`，再运行 `Start-VoiceEngine.ps1`。如果没有兼容的 CUDA 环境，请按 GPT-SoVITS 官方说明准备 CPU 或适用的运行环境。
 
 **中文语音输入**是独立选项。侧键说话需要另行准备中文识别环境（Python 中的 FunASR、soundfile、NumPy 和 Paraformer 模型）。在「语音输入与麦克风」选择该引擎后重启。使用打字聊天和听日语回复不需要中文识别模型。
 
@@ -61,8 +65,8 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 .\tools\Check-Release.ps1
 ```
 
-构建发布包时会校验并缓存 Python 嵌入式运行时、NumPy 和 PyOpenJTalk Plus 三个公开依赖。首次构建需要联网，下载 ZIP 的用户可直接离线合成。各依赖许可证与 Mei 声线授权说明随包放在 app/ja-tts 内。
+配音安装器会验证下载的引擎文件。
 
-这会检查公开文件、编译两版、运行离线回归、比对程序素材与源码素材的 SHA256，并生成、验证两个 ZIP。不会调用收费模型或录制麦克风。输出位于 `releases/`，包括两个英文命名 ZIP 和 `SHA256SUMS-v1.42.0.txt`。重复生成同一版本时需显式加 `-ReplaceExisting`；其他版本及仓库外历史包不会删除。仅重新打包已验证构建可运行 `Package-Release.ps1 -SkipBuild`，但日常发布应先通过完整检查。
+这会检查公开文件、编译两版、运行离线回归、比对程序素材与源码素材的 SHA256，并生成、验证两个 ZIP。不会调用收费模型或录制麦克风。输出位于 `releases/`，包括两个英文命名 ZIP 和 `SHA256SUMS-v1.42.2.txt`。重复生成同一版本时需显式加 `-ReplaceExisting`；其他版本及仓库外历史包不会删除。仅重新打包已验证构建可运行 `Package-Release.ps1 -SkipBuild`，但日常发布应先通过完整检查。
 
 只将源码提交到 Git；ZIP 作为 GitHub Release 附件上传。代码按 [MIT](LICENSE) 提供；人物、图片、音频等素材不随代码许可证授权。
