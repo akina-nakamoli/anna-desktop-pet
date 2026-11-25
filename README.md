@@ -6,10 +6,7 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 在 GitHub **Releases** 下载一种版本：
 
-- `anna-desktop-pet-GPT-v1.42.2-BundledVoice-RefFix.zip`
-- `anna-desktop-pet-DeepSeek-v1.42.2-BundledVoice-RefFix.zip`
-
-完整解压 ZIP，进入解压目录的 `app` 文件夹，双击 `AnnaDesktopPet.exe`。不要只取出 EXE；`assets`、`outfits`、`reference` 和 `voice-engine` 等目录需要与程序保存在一起。免编译包适用于 64 位 Windows，需 .NET Framework 4.8。GPT 与 DeepSeek 一次选择一个运行。
+下载 "anna-desktop-pet-v1.42.2-BundledVoice-Compact.zip"，完整解压后，在 app 文件夹运行 AnnaDesktopPet-GPT.exe 或 AnnaDesktopPet-DeepSeek.exe。两版共用同一套本地日语配音资源。适用于 64 位 Windows 和 .NET Framework 4.8。
 
 首次使用在设置中填写自己的 API Key。两种服务分别使用自己的 Key 和账户额度，API 调用可能产生费用；没有 Key 时仍可打开桌宠及本地功能。
 
@@ -26,7 +23,7 @@ Windows 桌面宠物，提供 GPT 与 DeepSeek 两个版本。保留杏菜人物
 
 ## 可选语音和音乐配置
 
-文件名含有 `BundledVoice` 的版本已内置杏菜日语推理引擎，完整解压后打开 `app/AnnaDesktopPet.exe` 即可。首次聊天时程序会等待模型加载。
+文件名含有 `BundledVoice` 的版本已内置杏菜日语推理引擎，完整解压后运行所选版本 即可。首次聊天时程序会等待模型加载。
 
 对于没有内置配音的旧包，首次使用请双击「首次安装杏菜配音.cmd」。它会下载约 7.6 GiB 的 GPT-SoVITS 整合包并登记引擎。成功后启动桌宠，聊天回复默认使用杏菜参考音色。已有引擎也可按以下步骤登记。
 
