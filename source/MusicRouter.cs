@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -37,6 +37,36 @@ namespace AnnaDesktopPet
         private string candidateVersion = Guid.NewGuid().ToString("N");
         private string current;
         private bool paused, disposed;
+        internal Action OpenMusicPanel { get; set; }
+        internal string LocalTitle { get { return current == null ? null : Path.GetFileNameWithoutExtension(current); } }
+        internal bool LocalPaused { get { return paused; } }
+        internal double LocalSeconds { get { return current == null ? 0 : player.Position.TotalSeconds; } }
+        internal double LocalDuration { get { return current != null && player.NaturalDuration.HasTimeSpan ? player.NaturalDuration.TimeSpan.TotalSeconds : 0; } }
+        internal QqTrack RequestedPlaying(string title, string artist, string album)
+        {
+            var track = lastRequestedQq;
+            return track != null && QqTrackIdentity.Matches(title, artist, album, track.Title, track.Artist, track.Album) ? track : null;
+        }
+        internal async Task<QqTrack> ResolvePlayingAsync(string title, string artist, string album, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (disposed || String.IsNullOrWhiteSpace(title) || String.IsNullOrWhiteSpace(artist)) return null;
+            var requested = RequestedPlaying(title, artist, album);
+            if (requested != null) return requested;
+
+            var results = await qqSearch(QqTrackIdentity.SearchQuery(title, artist), token);
+            token.ThrowIfCancellationRequested();
+            if (disposed || results == null) return null;
+            QqTrack match = null;
+            foreach (var candidate in results)
+            {
+                if (candidate == null || candidate.Type != 0 || String.IsNullOrEmpty(candidate.Id) ||
+                    !QqTrackIdentity.Matches(title, artist, album, candidate.Title, candidate.Artist, candidate.Album)) continue;
+                if (match != null && match.Id != candidate.Id) return null;
+                match = candidate;
+            }
+            return match;
+        }
         internal MusicRouter(Action<string> notify, Action<string> web = null, string[] searchRoots = null, Func<string, CancellationToken, Task<List<QqTrack>>> searchQq = null, Func<QqTrack, CancellationToken, Task> dispatchQq = null)
         {
             notice = notify; qqSearch = searchQq ?? QqCatalog.Search; qqDispatch = dispatchQq ?? QqCatalog.Dispatch;
@@ -48,6 +78,14 @@ namespace AnnaDesktopPet
         internal void CancelPending() { lock (QqCatalog.DispatchGate) { var old = pending; pending = new CancellationTokenSource(); old.Cancel(); ClearSelection(); } }
         private void ClearSelection() { candidates.Clear(); qqCandidates.Clear(); choosingQq = false; awaitingChoice = false; candidateVersion = Guid.NewGuid().ToString("N"); }
         internal void AbandonCandidates() { ClearSelection(); }
+        internal async Task<string> PlaySearchResultAsync(QqTrack track, CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (disposed) return "桌宠已关闭。";
+            if (track == null) throw new ArgumentNullException("track");
+            using (var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, pending.Token))
+                return await PlayQq(track, linked.Token, null, false);
+        }
         internal MusicCandidateSnapshot CaptureCandidates()
         {
             var snapshot = new MusicCandidateSnapshot { Version = candidateVersion };
@@ -67,10 +105,10 @@ namespace AnnaDesktopPet
                 CancellationToken token = linked.Token;
                 token.ThrowIfCancellationRequested();
                 string result;
-                if (intent.Intent == "play")
+                if (intent.Intent == "play" || intent.Intent == "random_artist")
                 {
                     ClearSelection();
-                    result = await SearchAsync((intent.Query ?? "").Trim(), false, token, onToolResult);
+                    result = await SearchAsync((intent.Query ?? "").Trim(), false, token, onToolResult, intent.Intent == "random_artist");
                 }
                 else if (intent.Intent == "choose")
                 {
@@ -172,7 +210,11 @@ namespace AnnaDesktopPet
                 }
             }catch(Exception){return "收藏读取或保存失败，请检查本机配置目录。";}
             string memoryResult=PetMemory.Handle(t); if(memoryResult!=null) { ClearSelection(); return memoryResult; }
-            if (Regex.IsMatch(t, @"^(?:打开)?(?:音乐面板|正在播放面板)[。！!\s]*$")) { new MusicPanel().Show(); return "音乐面板已打开。"; }
+            if (Regex.IsMatch(t, @"^(?:打开)?(?:音乐面板|正在播放面板)[。！!\s]*$"))
+            {
+                if (OpenMusicPanel != null) OpenMusicPanel(); else new MusicPanel(this).Show();
+                return "音乐面板已打开。";
+            }
             if (Regex.IsMatch(t, @"^(?:请|杏菜|帮我)?[，,\s]*(上一首|下一首|暂停音乐|继续播放|恢复播放|暂停|继续音乐)[吧。！!\s]*$") && current == null)
             {
                 string command=t.Contains("上一首")?"previous":t.Contains("下一首")?"next":t.Contains("暂停")?"pause":"play";
@@ -213,7 +255,7 @@ namespace AnnaDesktopPet
             if (quoted.Success) query = (quoted.Groups[1].Value + (quoted.Groups[2].Success ? quoted.Groups[2].Value : quoted.Groups[3].Value)).Trim();
             return await SearchAsync(query, explicitLocal, token, onToolResult);
         }
-        private async Task<string> SearchAsync(string query, bool explicitLocal, CancellationToken token, Action<string> onToolResult)
+        private async Task<string> SearchAsync(string query, bool explicitLocal, CancellationToken token, Action<string> onToolResult, bool randomArtist = false)
         {
             token.ThrowIfCancellationRequested();
             if (query.Length == 0 || query.Length > 100 || Normalize(query).Length < 1) return "想听哪首歌？请告诉我歌名。";
@@ -224,6 +266,14 @@ namespace AnnaDesktopPet
                 try { found = await qqSearch(query, token); token.ThrowIfCancellationRequested(); }
                 catch (Exception) { if (token.IsCancellationRequested) return "已取消音乐搜索。"; return "暂时无法连接 QQ 音乐曲库，请检查网络后重试；也可以说：播放本地 " + query + "。"; }
                 if (disposed) return "桌宠已关闭。";
+                if (randomArtist)
+                {
+                    string singer = Normalize(query);
+                    var artistTracks = (found ?? new List<QqTrack>()).FindAll(track =>
+                        Array.Exists((track.Artist ?? "").Split('/'), part => Normalize(part) == singer));
+                    if (artistTracks.Count == 0) return "QQ 音乐没有找到歌手「" + query + "」的曲目。";
+                    return await PlayQq(artistTracks[favoriteRandom.Next(artistTracks.Count)], token, onToolResult);
+                }
                 if (found == null || found.Count == 0) return "QQ 音乐没有找到「" + query + "」。可以换个歌名或说播放本地歌曲。";
                 QqTrack exact = null; int exactCount = 0;
                 foreach (QqTrack track in found) {
@@ -254,13 +304,15 @@ namespace AnnaDesktopPet
             }
             return Play(candidates[0]);
         }
-        private async Task<string> PlayQq(QqTrack track, CancellationToken token, Action<string> onToolResult)
+        private async Task<string> PlayQq(QqTrack track, CancellationToken token, Action<string> onToolResult, bool clearChatCandidates = true)
         {
             try { token.ThrowIfCancellationRequested(); await qqDispatch(track, token);
                 // Dispatch is already a real side effect. Save its receipt synchronously before
                 // observing cancellation or waiting for media-session playback confirmation.
                 if (onToolResult != null) onToolResult("已向 QQ 音乐发送播放请求：" + track.Title + " — " + track.Artist + "，尚未确认开始播放。");
-                token.ThrowIfCancellationRequested(); lastRequestedQq=track;favoriteMode=false; ClearSelection(); if (current != null) { player.Stop(); player.Close(); current = null; paused = false; }
+                token.ThrowIfCancellationRequested(); lastRequestedQq=track;favoriteMode=false;
+                if (clearChatCandidates) ClearSelection();
+                if (current != null) { player.Stop(); player.Close(); current = null; paused = false; }
                 if (qqDispatch.Method.DeclaringType == typeof(QqCatalog))
                 {
                     for (int attempt=0;attempt<3;attempt++)

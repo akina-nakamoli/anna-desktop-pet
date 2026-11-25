@@ -1,14 +1,14 @@
-param([switch]$SkipTests, [switch]$ReplaceExisting)
+﻿param([switch]$SkipTests, [switch]$ReplaceExisting)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$version = '1.41.4'
+$version = '1.42.0'
 . (Join-Path $PSScriptRoot 'Release-Validation.ps1')
 Push-Location $repo
 try {
     $files = @(git -c core.quotePath=false ls-files --cached --others --exclude-standard)
     if ($LASTEXITCODE -ne 0) { throw 'Git file inventory failed.' }
     foreach ($file in $files) {
-        if ($file -match '^(build|dist|private-assets|releases[^/]*)/' -or ($file -match '\.(exe|dll|wav|mp3|flac|mgg|bin|key)$' -and $file -ne 'reference/anna.wav')) { throw "Unexpected publish file: $file" }
+        if ($file -match '^(build|dist|private-assets|releases[^/]*)/' -or ($file -match '\.(exe|dll|wav|mp3|flac|mgg|bin|key)$' -and $file -notin @('reference/anna.wav','source/live2d-runtime/PurismCore.dll'))) { throw "Unexpected publish file: $file" }
         Assert-NoPrivateReleaseFile $file
     }
     foreach ($file in Get-ChildItem -LiteralPath (Join-Path $repo 'source') -File -Recurse | Where-Object { $_.Extension -in @('.cs','.ps1','.py','.md') }) {

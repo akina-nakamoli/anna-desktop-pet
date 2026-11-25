@@ -27,3 +27,6 @@ engine-process.json
 !reference/anna.wav
 releases/
 releases-v2/
+
+# Personal novel search index
+novel.tsv

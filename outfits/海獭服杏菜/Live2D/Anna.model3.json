@@ -1,0 +1,44 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "Uniform2-front.moc3",
+    "Textures": [
+      "uniform2-texture.png"
+    ],
+    "DisplayInfo": "Uniform2-front.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "motions/Uniform2-idle.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.35
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ],
+  "AnnaPortrait": {
+    "EyeX": 0.496582,
+    "EyeY": 0.1381836,
+    "MouthX": 0.5029297,
+    "MouthY": 0.171224,
+    "NeckX": 0.5019531,
+    "NeckY": 0.2122396
+  }
+}

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Windows.Controls;
 
@@ -10,10 +10,10 @@ namespace AnnaDesktopPet
         {
             internal CancellationTokenSource Cancellation;
             internal string UserText, PartialText = "", Receipt = "";
-            internal DateTime SentUtc;
+            internal DateTime SentUtc; internal DateTime? AudioWaitStarted; internal bool RevealStarted;
             internal TextBox Bubble;
-            internal ChatMessage SavedUser, SavedReceipt;
-            internal bool SpeechStarted, Committed;
+            internal ChatMessage SavedUser, SavedReceipt, DisplayedAnswer;
+            internal bool SpeechStarted, Committed, SpeakJapanese; internal string PartialJapanese = "";
         }
 
         private ReplyTurn activeReply;
@@ -44,6 +44,52 @@ namespace AnnaDesktopPet
             return !closing && activeReply == turn && request == turn.Cancellation && !turn.Cancellation.IsCancellationRequested;
         }
 
+        private readonly System.Windows.Threading.DispatcherTimer revealTimer =
+            new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(15) };
+        private ReplyTurn revealing;
+        private string revealChinese = "", revealJapanese = "";
+
+        private static string NextCharacter(string current, string target)
+        {
+            if (!target.StartsWith(current, StringComparison.Ordinal)) current = "";
+            if (current.Length == target.Length) return current;
+            return current + System.Globalization.StringInfo.GetNextTextElement(target, current.Length);
+        }
+
+        private void RevealTick(object sender, EventArgs args)
+        {
+            var turn = revealing;
+            if (closing || turn == null || turn.Bubble == null)
+            {
+                revealTimer.Stop();
+                return;
+            }
+            var pet = Owner as PetWindow;
+            if (!turn.RevealStarted && turn.SpeakJapanese && pet != null && revealJapanese.Length > 0)
+            {
+                if (!turn.AudioWaitStarted.HasValue) turn.AudioWaitStarted = DateTime.UtcNow;
+                // Keep subtitles available even if audio initialization or synthesis fails.
+                if (!pet.ReplyAudioPlaying && (DateTime.UtcNow - turn.AudioWaitStarted.Value).TotalSeconds < 3) return;
+            }
+            turn.RevealStarted = true;
+            var chinese = turn.Bubble;
+            var japanese = (TextBox)chinese.Tag;
+            bool follow = conversation.ScrollableHeight - conversation.VerticalOffset < 45;
+            chinese.Text = NextCharacter(chinese.Text, revealChinese);
+            japanese.Text = NextCharacter(japanese.Text, revealJapanese);
+            if (japanese.Text.Length > 0) japanese.Visibility = System.Windows.Visibility.Visible;
+            if (follow) ScrollToEnd();
+            if (chinese.Text == revealChinese && japanese.Text == revealJapanese) revealTimer.Stop();
+        }
+
+        private void Reveal(ReplyTurn turn, string chinese, string japanese)
+        {
+            revealing = turn;
+            revealChinese = chinese ?? "";
+            revealJapanese = japanese ?? "";
+            if (turn.Bubble == null) turn.Bubble = AddBubble("assistant", "");
+            revealTimer.Start();
+        }
         private void ApplyStream(ReplyTurn turn, GptStreamUpdate update)
         {
             if (update == null || Dispatcher.HasShutdownStarted) return;
@@ -52,14 +98,15 @@ namespace AnnaDesktopPet
                 if (!OwnsTurn(turn)) return;
                 if (!String.IsNullOrEmpty(update.DisplayText) && update.DisplayText != turn.PartialText)
                 {
-                    bool follow = conversation.ScrollableHeight - conversation.VerticalOffset < 45;
                     turn.PartialText = update.DisplayText;
-                    if (turn.Bubble == null) turn.Bubble = AddBubble("assistant", turn.PartialText);
-                    else turn.Bubble.Text = turn.PartialText;
+                    CallAssistantText = turn.PartialText;
                     SetStatus("杏菜正在回复……按住鼠标后退侧键可以打断并说话。", false);
-                    if (follow) ScrollToEnd();
                 }
-                if (!String.IsNullOrWhiteSpace(update.JapaneseSentence) && appendStreamSpeech != null)
+                if (!String.IsNullOrWhiteSpace(update.JapaneseSentence))
+                    turn.PartialJapanese += update.JapaneseSentence;
+                if (turn.PartialText.Length > 0)
+                    Reveal(turn, turn.PartialText, turn.PartialJapanese);
+                if (turn.SpeakJapanese && !String.IsNullOrWhiteSpace(update.JapaneseSentence) && appendStreamSpeech != null)
                 {
                     try
                     {
@@ -121,7 +168,7 @@ namespace AnnaDesktopPet
                 history.Add(turn.SavedReceipt);
             }
             if (!String.IsNullOrWhiteSpace(turn.PartialText))
-                history.Add(new ChatMessage("assistant", "【" + reason + "，未完成】\n" + turn.PartialText));
+                history.Add(new ChatMessage("assistant", "【" + reason + "，未完成】\n" + turn.PartialText) { JapaneseText = turn.PartialJapanese });
             else history.Add(new ChatMessage("local_assistant", "【" + reason + "】尚未生成完整回答。"));
             return PersistHistory();
         }

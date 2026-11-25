@@ -118,6 +118,8 @@ namespace AnnaDesktopPet
 
         private static async Task Run()
         {
+            await OrdinaryChatSkipsMusicResolver();
+            await BareSongChoiceKeepsMusicContext();
             await RecommendationAndCandidateFlow();
             await ChatAndClarification();
             await MalformedIntents();
@@ -126,6 +128,7 @@ namespace AnnaDesktopPet
             await NarrationFailureKeepsOutcome();
             await BilingualNarration();
             await StaleSelection();
+            await RandomArtistFollowUp();
             await ActualChatSendPath();
             await PretenderFollowUpChatPath();
             await ClarificationFollowUpChatPath();
@@ -139,6 +142,50 @@ namespace AnnaDesktopPet
                 new ChatMessage("user", "推荐一首日语歌给我吧"),
                 new ChatMessage("assistant", "那就《夜に駆ける》吧！节奏很带感。")
             };
+        }
+
+        private static async Task OrdinaryChatSkipsMusicResolver()
+        {
+            using (var music = new FakeMusic())
+            {
+                const string spoken = "それは大変だったね。";
+                var script = new ModelScript(new Step(Serializer.Serialize(new {
+                    display_text = "今天辛苦了。",
+                    speech_ja = spoken
+                })));
+                var flow = new MusicConversation(script.Client, music.Router);
+                var history = new List<ChatMessage> { new ChatMessage("assistant", "今天过得怎么样？") };
+                GptReply reply = await flow.SendAsync(Settings(), history, "今天上课有点累", true, CancellationToken.None, null);
+                Check(reply.DisplayText == "今天辛苦了。" && reply.JapaneseSpeechText == spoken,
+                    "Ordinary chat directly receives its bilingual reply");
+                Check(script.Calls == 1 && music.Searches == 0 && music.Dispatches == 0,
+                    "Ordinary chat avoids the music intent request and tool calls");
+                script.Complete();
+            }
+        }
+
+        private static async Task BareSongChoiceKeepsMusicContext()
+        {
+            using (var music = new FakeMusic())
+            {
+                var history = new List<ChatMessage> {
+                    new ChatMessage("assistant", "你想听《夜に駆ける》还是《打上花火》？")
+                };
+                var script = new ModelScript(
+                    new Step(Intent("play", "打上花火"), delegate(Dictionary<string, object> body)
+                    {
+                        var packet = ResolverPacket(body);
+                        Check((string)packet["user_text"] == "打上花火", "Bare title reaches the resolver verbatim");
+                        Check(Serializer.Serialize(packet["history"]).Contains("夜に駆ける"),
+                            "Resolver sees the music question that makes the title a choice");
+                    }),
+                    new Step("找到两个版本了。"));
+                var flow = new MusicConversation(script.Client, music.Router);
+                await flow.SendAsync(Settings(), history, "打上花火", false, CancellationToken.None, null);
+                Check(music.Searches == 1 && music.LastQuery == "打上花火" && music.Dispatches == 0,
+                    "Contextual title searches songs without choosing a version");
+                script.Complete();
+            }
         }
 
         private static async Task RecommendationAndCandidateFlow()
@@ -311,6 +358,24 @@ namespace AnnaDesktopPet
                 var script = new ModelScript(new Step(Intent("choose", "", 1)), stop);
                 GptReply result = await new MusicConversation(script.Client, music.Router).SendAsync(Settings(), null, "第一个", false, cancellation.Token, null);
                 Check(music.Dispatches == 1 && !String.IsNullOrEmpty(result.ToolResultText), "Cancel narration preserves already dispatched result");
+            }
+        }
+
+        private static async Task RandomArtistFollowUp()
+        {
+            using (var music = new FakeMusic())
+            {
+                var script = new ModelScript(new Step(Intent("random_artist", "YOASOBI")), new Step("这就放。"));
+                var history = new List<ChatMessage> {
+                    new ChatMessage("user", "我想听YOASOBI的歌"),
+                    new ChatMessage("assistant", "想听YOASOBI的哪首歌？")
+                };
+                GptReply reply = await new MusicConversation(script.Client, music.Router).SendAsync(
+                    Settings(), history, "你来随机一首", false, CancellationToken.None, null);
+                Check(music.LastQuery == "YOASOBI" && music.Dispatches == 1 && music.LastId == "original",
+                    "Artist follow-up searches by singer and skips covers by other singers");
+                Check(reply.ToolResultText.Contains("发送播放请求"), "Random artist playback uses the real tool outcome");
+                script.Complete();
             }
         }
 

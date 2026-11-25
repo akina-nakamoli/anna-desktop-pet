@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Globalization;
 using System.Collections.Generic;
@@ -17,8 +17,8 @@ using System.Windows.Threading;
 
 [assembly: AssemblyTitle("杏菜桌宠 · 参考音色")]
 [assembly: AssemblyDescription("杏菜桌面伙伴，支持中文 GPT 对话、日语配音与人物动作。")]
-[assembly: AssemblyVersion("1.41.4.0")]
-[assembly: AssemblyFileVersion("1.41.4.0")]
+[assembly: AssemblyVersion("1.42.0.0")]
+[assembly: AssemblyFileVersion("1.42.0.0")]
 
 namespace AnnaDesktopPet
 {
@@ -31,8 +31,13 @@ namespace AnnaDesktopPet
         internal static bool OpenChatOnStart;
         internal static bool MediaCheck;
         internal static bool PanelCheck;
-        internal static bool ChatPreview, VoicePreview, NarrowPreview;
+        internal static bool ChatPreview, MusicPreview, RailPreview, VoicePreview, NarrowPreview, PreviewWithPet;
         internal static string SmokePath;
+        internal static string GhostPreviewDirectory;
+        internal static string Uniform2PreviewDirectory;
+        internal static string Uniform2ActionsPreviewDirectory;
+        internal static string PortraitConversationPreviewDirectory;
+        internal static string GhostActionsPreviewDirectory;
         [STAThread]
         public static int Main(string[] args)
         {
@@ -41,12 +46,25 @@ namespace AnnaDesktopPet
             OpenChatOnStart = Array.IndexOf(args, "--chat") >= 0;
             MediaCheck = Array.IndexOf(args, "--media-check") >= 0;
             ChatPreview = Array.IndexOf(args, "--chat-preview") >= 0;
+            MusicPreview = Array.IndexOf(args, "--music-preview") >= 0;
+            RailPreview = Array.IndexOf(args, "--rail-preview") >= 0;
+            PreviewWithPet = Array.IndexOf(args, "--with-pet") >= 0;
             VoicePreview = Array.IndexOf(args, "--voice-preview") >= 0;
             NarrowPreview = Array.IndexOf(args, "--narrow-preview") >= 0;
-            PanelCheck = Array.IndexOf(args, "--panel-check") >= 0 || ChatPreview || VoicePreview;
+            PanelCheck = Array.IndexOf(args, "--panel-check") >= 0 || ChatPreview || MusicPreview || RailPreview || VoicePreview;
             if (Smoke || MediaCheck || PanelCheck) diagnosticDataDir = Path.Combine(Path.GetTempPath(), "AnnaDesktopPet-Diagnostic", Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
             int outputAt = Array.IndexOf(args, "--report");
             if (outputAt >= 0 && outputAt + 1 < args.Length) SmokePath = args[outputAt + 1];
+            int previewAt = Array.IndexOf(args, "--ghost-preview");
+            if (Smoke && previewAt >= 0 && previewAt + 1 < args.Length) GhostPreviewDirectory = Path.GetFullPath(args[previewAt + 1]);
+            int uniformAt = Array.IndexOf(args, "--uniform2-preview");
+            if (Smoke && uniformAt >= 0 && uniformAt + 1 < args.Length) Uniform2PreviewDirectory = Path.GetFullPath(args[uniformAt + 1]);
+            int uniformActionsAt = Array.IndexOf(args, "--uniform2-actions-preview");
+            if (Smoke && uniformActionsAt >= 0 && uniformActionsAt + 1 < args.Length) Uniform2ActionsPreviewDirectory = Path.GetFullPath(args[uniformActionsAt + 1]);
+            int conversationAt = Array.IndexOf(args, "--portrait-conversation-preview");
+            if (Smoke && conversationAt >= 0 && conversationAt + 1 < args.Length) PortraitConversationPreviewDirectory = Path.GetFullPath(args[conversationAt + 1]);
+            int actionsAt = Array.IndexOf(args, "--ghost-actions-preview");
+            if (Smoke && actionsAt >= 0 && actionsAt + 1 < args.Length) GhostActionsPreviewDirectory = Path.GetFullPath(args[actionsAt + 1]);
             bool first;
             using (Mutex mutex = new Mutex(true, PanelCheck ? "Local\\AnnaDesktopPet.v1.panel-check" : MediaCheck ? "Local\\AnnaDesktopPet.v1.media-check" : "Local\\AnnaDesktopPet.v1", out first))
             {
@@ -129,11 +147,10 @@ namespace AnnaDesktopPet
         }
     }
 
-    internal sealed class PetWindow : Window
+    internal sealed partial class PetWindow : Window
     {
         private readonly Settings settings;
         private readonly Image character;
-        private readonly Image previousCharacter;
         private readonly Grid characterLayer;
         private readonly Border bubble;
         private readonly TextBlock speech;
@@ -149,13 +166,19 @@ namespace AnnaDesktopPet
         private BitmapSource bitmap;
         private byte[] alphaPixels;
         private int pixelWidth, pixelHeight;
-        private MotionController motions;
+        private MotionFrame standingPortrait;
+        private Live2DPetModel liveModel;
+        private readonly LiveFaceTracking liveFace = new LiveFaceTracking(new Random());
+        private readonly IdleGestures idleGestures;
+        private readonly GhostGestures ghostGestures;
+        private readonly Uniform2GestureDirector uniform2Director;
+        private double lastLiveFrame = -1;
+        private string standingPose;
+        private IdleGesturePose standingTransitionFrom, standingExpression;
+        private double standingTransitionStart;
         private readonly AutonomousMotion autonomous = new AutonomousMotion();
         private ContextMenu activeMenu;
-        private double nextAutonomousGesture = 45;
         private string activePose;
-        private MotionFrame activeMotionFrame, previousMotionFrame;
-        private double transitionStart, transitionDuration;
         private string temporaryPose = "idle";
         private double poseUntil, poseStarted, actionVoiceDeadline;
         private long actionVoiceOperation = -1;
@@ -167,32 +190,65 @@ namespace AnnaDesktopPet
         private bool pressed, dragged;
         private double lastClickTime = -100;
         private Point lastClickScreen;
+        private double nextOtterIdle;
+        private int otterIdleCount;
         private double bubbleUntil, happyUntil, lastHover;
         private DateTime? focusEnd;
         private int focusTotal;
         private long focusVoiceOperation = -1;
         private bool focusVoicePending;
         private Action<string> focusVoiceSmokeHook;
-        private Window panel;
         private GptChatWindow chatWindow;
         private readonly ConversationHistory chatHistory = ConversationHistory.LoadDefault();
         private readonly GptSettings gptSettings;
         private bool thinking;
+        private bool waitingForReplyMotion;
+        private double submittedMotionAt, briefReplyUntil = -1;
+        private PortraitConversationState portraitConversation;
+        private bool HasConversationPortrait { get { return liveModel != null; } }
         private TextBlock focusLabel;
         private bool closing;
         private DesktopShell desktopShell;
         private VoiceChat voiceChat;
+        private CallWindow callWindow;
+        internal void OpenCall()
+        {
+            if (closing || hiddenForGame) return;
+            if (callWindow != null) { callWindow.Show(); callWindow.Activate(); return; }
+            if (String.IsNullOrWhiteSpace(gptSettings.ApiKey)) { Say("请先在模型设置中填写 API Key。",6); return; }
+            if (settings.Sleeping) { Say("先叫醒杏菜，再打电话吧。",6); return; }
+            if (voiceChat == null) return;
+            voiceChat.CancelCapture();
+            OpenChat();
+            callWindow = new CallWindow(this, chatWindow, voiceChat.Worker, voice);
+            callWindow.Closed += delegate { callWindow = null; if (!closing && !hiddenForGame && chatWindow != null) chatWindow.Show(); };
+            chatWindow.Closed += delegate { if (callWindow != null) callWindow.Close(); };
+            chatWindow.Hide();
+            callWindow.Show();
+        }
+
         private ProgressBar voiceLevel;
-        internal void SetVoiceLevel(bool visible,double level){if(voiceLevel!=null){voiceLevel.Visibility=visible&&!hiddenForGame?Visibility.Visible:Visibility.Collapsed;voiceLevel.Value=level*100;}}
+        internal void SetVoiceLevel(bool visible,double level){if(voiceLevel!=null){voiceLevel.Visibility=visible&&!hiddenForGame?Visibility.Visible:Visibility.Collapsed;voiceLevel.Value=level*100;}SetRailRecording(visible && voiceChat != null && voiceChat.RecordingFromButton);}
         private void OpenVoiceInput(){if(voiceChat!=null)voiceChat.ShowSettings();}
         internal void ReviewVoiceTranscript(string text){if(hiddenForGame || closing)return;OpenChat();chatWindow.ReviewVoice(text);}
+        internal bool ReplyAudioPlaying { get { return voice.IsSpeaking; } }
         internal void SpeakVoiceReply(string text){if(!hiddenForGame && !closing && !String.IsNullOrWhiteSpace(text))voice.Speak(text);}
         private bool hiddenForGame, loadedOnce;
         private string deferredFocusNotice;
         private void OnShellVisibilityChanged(bool hidden)
         {
             hiddenForGame = hidden;
+            if (hidden)
+            {
+                waitingForReplyMotion = false;
+                portraitConversation = PortraitConversationState.None;
+                if (liveModel != null) liveModel.ResetConversationMotion();
+            }
+            idleGestures.Reset();
+            ghostGestures.Reset();
+            uniform2Director.Reset();
             if(hidden && voiceChat!=null)voiceChat.CancelCapture();
+            if(hidden && callWindow!=null)callWindow.HangUp();
             clickTimer.Stop(); lastClickTime = -100;
             if (activeMenu != null) activeMenu.IsOpen = false;
             pressed = dragged = false; ReleaseMouseCapture();
@@ -203,12 +259,11 @@ namespace AnnaDesktopPet
             { Say(deferredFocusNotice, 12); deferredFocusNotice = null; }
         }
         private bool changingOutfit;
-        private bool anchoredWaveTransform;
-        private double waveScaleX=1,waveScaleY=1,waveFloat,waveTilt;
         private Border dressingRoom;
         private async void ChangeOutfit()
         {
             if(closing || changingOutfit)return;
+            if (Program.Smoke) { LoadCharacter(); return; }
             changingOutfit=true;
             try {
                 autonomous.Interrupt(elapsed.Elapsed.TotalSeconds);
@@ -225,7 +280,6 @@ namespace AnnaDesktopPet
                 if(closing)return;
                 await System.Threading.Tasks.Task.Delay(2600);
                 if(closing)return;
-                activeMotionFrame=null;previousMotionFrame=null;previousCharacter.Opacity=0;
                 LoadCharacter();
                 PlayMotion("idle",3);
                 dressingRoom.BeginAnimation(UIElement.OpacityProperty,new System.Windows.Media.Animation.DoubleAnimation(1,0,TimeSpan.FromMilliseconds(650)));
@@ -249,6 +303,9 @@ namespace AnnaDesktopPet
 
         public PetWindow()
         {
+            idleGestures = new IdleGestures(random);
+            ghostGestures = new GhostGestures(random);
+            uniform2Director = new Uniform2GestureDirector(random);
             settings = Settings.Load();
             gptSettings = GptSettings.Load();
             mediaSettings = SpeechSettings.Load();
@@ -256,8 +313,10 @@ namespace AnnaDesktopPet
             Appearance.OutfitChanged+=ChangeOutfit;
             Closed+=delegate {Appearance.OutfitChanged-=ChangeOutfit;};
             VoiceAutoStart.Start(mediaSettings);
+            VoicePerformance.ProfileRoot = Program.DataDir;
             voice = new SpeechService(Dispatcher);
             localMusic = new MusicRouter(delegate(string message) { if (!closing) Say(message, 8); });
+            localMusic.OpenMusicPanel = delegate { ShowCompanionTab("music"); };
             routine=new Routine(delegate(string text,string japanese) { if(closing || hiddenForGame || settings.Sleeping || thinking || voice.IsBusy)return; Say(text,10); ReadLocal(japanese); });
             Loaded+=delegate { routine.Start(); };
             Closed+=delegate { routine.Stop(); };
@@ -288,10 +347,7 @@ namespace AnnaDesktopPet
             transforms.Children.Add(floatAt);
             character.RenderTransform = transforms;
             RenderOptions.SetBitmapScalingMode(character, BitmapScalingMode.HighQuality);
-            previousCharacter = new Image { Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Bottom, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(22, 90, 22, 10), RenderTransformOrigin = new Point(.5, .88), RenderTransform = transforms, Opacity = 0, IsHitTestVisible = false };
-            RenderOptions.SetBitmapScalingMode(previousCharacter, BitmapScalingMode.HighQuality);
             characterLayer = new Grid();
-            characterLayer.Children.Add(previousCharacter);
             characterLayer.Children.Add(character);
             root.Children.Add(characterLayer);
             stateBadge = new TextBlock { FontSize = 18, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(91, 150, 190)), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 98, 20, 0), Visibility = Visibility.Collapsed, IsHitTestVisible = false, RenderTransform = badgeFloat };
@@ -317,6 +373,7 @@ namespace AnnaDesktopPet
             root.Children.Add(bubble);
             voiceLevel=new ProgressBar{Minimum=0,Maximum=100,Width=140,Height=7,HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(0,88,0,0),Visibility=Visibility.Collapsed,Foreground=Brushes.MediumSeaGreen};root.Children.Add(voiceLevel);
 
+            AddActionRail(root);
             LoadCharacter();
             ApplySize();
             SourceInitialized += OnSourceInitialized;
@@ -333,9 +390,10 @@ namespace AnnaDesktopPet
             Closed += delegate
             {
                 closing = true; tick.Stop(); clickTimer.Stop(); CompositionTarget.Rendering -= Animate;
+                if (liveModel != null) liveModel.Dispose();
                 if (desktopShell != null) desktopShell.Dispose();
+                if (callWindow != null) callWindow.Close();
                 if (voiceChat != null) voiceChat.Dispose();
-                if (panel != null) panel.Close();
                 if (chatWindow != null) chatWindow.Close();
                 if (mediaWindow != null) mediaWindow.Close();
                 localMusic.Dispose();
@@ -382,6 +440,8 @@ namespace AnnaDesktopPet
             finally { testPanel.Close(); hiddenForGame = false; }
         }
 
+        private bool UsesDefaultUniform { get { return Appearance.Outfit == Appearance.Uniform1Portrait; } }
+
         private void LoadCharacter()
         {
             string path = Appearance.Asset("pet.png");
@@ -392,50 +452,52 @@ namespace AnnaDesktopPet
                 img.BeginInit(); img.CacheOption = BitmapCacheOption.OnLoad; img.StreamSource = stream; img.EndInit(); img.Freeze();
             }
             bitmap = new FormatConvertedBitmap(img, PixelFormats.Bgra32, null, 0); bitmap.Freeze();
-            if(Appearance.Outfit=="校服2"){
-                string layers=Appearance.Asset("rest-layers");
-                if(Directory.Exists(layers))try{
-                    bitmap=RestPoseLayers.Load(layers,new MotionFrame(bitmap)).Compose().Image;
-                    Program.Log("School2 rest: composed from four original-art layers.");
-                }catch(Exception ex){Program.Log("Rest layers fallback: "+ex.Message);}
+            idleGestures.Reset();
+            ghostGestures.Reset();
+            uniform2Director.Reset();
+            nextOtterIdle = elapsed.Elapsed.TotalSeconds + 18; otterIdleCount = 0;
+            standingPose = null;
+            portraitConversation = PortraitConversationState.None;
+            if (liveModel != null) { liveModel.Dispose(); liveModel = null; }
+            string modelFile = Appearance.ModelManifest;
+            if (Environment.Is64BitProcess && File.Exists(modelFile))
+            {
+                try
+                {
+                    liveModel = Live2DPetModel.Load(modelFile);
+                    liveFace.Reset();
+                    lastLiveFrame = -1;
+                    Program.Log("Live2D loaded: " + modelFile);
+                }
+                catch (Exception ex) { Program.Log("Live2D load failed: " + ex.Message); }
             }
-            if(Appearance.Outfit!="默认" && Appearance.Outfit!="校服1") {
-                BitmapImage standard=new BitmapImage();
-                using(Stream stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("AnnaDesktopPet.pet.png")){standard.BeginInit();standard.CacheOption=BitmapCacheOption.OnLoad;standard.StreamSource=stream;standard.EndInit();standard.Freeze();}
-                MotionFrame canonical=new MotionFrame(standard);
-                bitmap=MotionController.Normalize(new MotionFrame(bitmap),canonical,canonical.SubjectBounds()).Image;
-            }
-            motions = new MotionController(bitmap);
+            standingPortrait = new MotionFrame(bitmap);
             SetFrame("idle");
+            if (liveModel != null) RenderLivePose("idle", elapsed.Elapsed.TotalSeconds);
         }
 
         private void SetFrame(string pose)
         {
-            SetFrame(pose, motions.Get(pose));
-        }
-        private void SetFrame(string pose, MotionFrame frame)
-        {
-            if(pose=="wave" && motions.HasWaveTrial && previousMotionFrame!=null){previousMotionFrame=null;previousCharacter.Opacity=0;previousCharacter.Source=null;}
-            if (activePose == pose && Object.ReferenceEquals(activeMotionFrame, frame)) return;
-            bool poseChanged = activePose != pose;
-            // Crossfade only the large arm motions. Blink and mouth frames are short and
-            // blending those would soften their detail; a full pose change uses a longer fade.
-            bool armFrameChanged = !poseChanged && (pose == "wave" || pose == "happy" || pose == "walk" || pose=="sit") && !(pose=="wave" && motions.HasWaveTrial);
-            if (!Program.Smoke && activeMotionFrame != null && (poseChanged || armFrameChanged) && mediaSettings.MotionsEnabled && !(pressed && dragged) && !(pose=="wave" && motions.HasWaveTrial))
-            {
-                previousMotionFrame = activeMotionFrame; previousCharacter.Source = previousMotionFrame.Image;
-                transitionStart = elapsed.Elapsed.TotalSeconds;
-                transitionDuration = poseChanged ? .20 : (pose == "wave" ? .045 : (pose == "walk" ? .035 : .06));
-            }
-            activeMotionFrame = frame;
-            bitmap = frame.Image; pixelWidth = frame.Width; pixelHeight = frame.Height; alphaPixels = frame.Pixels;
+            if (activePose == pose && Object.ReferenceEquals(character.Source,standingPortrait.Image)) return;
+            bitmap = standingPortrait.Image; pixelWidth = standingPortrait.Width; pixelHeight = standingPortrait.Height; alphaPixels = standingPortrait.Pixels;
+            SetStandingMargin(false);
             character.Source = bitmap; activePose = pose;
+        }
+
+        private void SetStandingMargin(bool live)
+        {
+            // The raised hands can use the space above the portrait without rescaling
+            // the character or changing where her feet land when switching poses.
+            double extra = live ? settings.Size * 1.25 * Live2DPetModel.OverheadPadding / Live2DPetModel.PortraitHeight : 0;
+            var margin = new Thickness(22, 90-extra, 22, 10);
+            if (character.Margin != margin) character.Margin = margin;
         }
 
         private void ApplySize()
         {
             Width = settings.Size + 64;
             Height = settings.Size * 1.25 + 100;
+            SetStandingMargin(liveModel != null && character.Source == liveModel.Frame);
             if (IsLoaded) KeepVisible();
         }
 
@@ -471,6 +533,7 @@ namespace AnnaDesktopPet
         private bool IsOpaqueAt(Point screen)
         {
             if (pressed) return true;
+            if (HitActionRail(screen)) return true;
             if (bubble.Visibility == Visibility.Visible)
             {
                 Point b = bubble.PointFromScreen(screen);
@@ -484,10 +547,7 @@ namespace AnnaDesktopPet
             int x = (int)Math.Floor((p.X - ox) / fit), y = (int)Math.Floor((p.Y - oy) / fit);
             if (x < 0 || y < 0 || x >= pixelWidth || y >= pixelHeight) return false;
             int index = (y * pixelWidth + x) * 4 + 3;
-            if (alphaPixels[index] >= 32) return true;
-            if (previousMotionFrame == null || previousCharacter.Opacity <= 0.1) return false;
-            int oldX = x * previousMotionFrame.Width / pixelWidth, oldY = y * previousMotionFrame.Height / pixelHeight;
-            return previousMotionFrame.Pixels[(oldY * previousMotionFrame.Width + oldX) * 4 + 3] >= 32;
+            return alphaPixels[index] >= 32;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -505,9 +565,11 @@ namespace AnnaDesktopPet
             if (!Program.Smoke && Program.MediaCheck) Dispatcher.BeginInvoke(new Action(OpenMedia), DispatcherPriority.ApplicationIdle);
             if (!Program.Smoke && Program.PanelCheck) Dispatcher.BeginInvoke(new Action(delegate
             {
+                if (Program.RailPreview || Program.PreviewWithPet) bubble.Visibility = Visibility.Collapsed;
                 if (Program.ChatPreview) OpenChat();
+                else if (Program.MusicPreview) ShowCompanionTab("music");
                 else if (Program.VoicePreview) OpenMedia();
-                else OpenPanel();
+                else if (!Program.RailPreview) OpenPanel();
                 if (!string.IsNullOrEmpty(Program.SmokePath)) Dispatcher.BeginInvoke(new Action(WritePanelPreview), DispatcherPriority.ApplicationIdle);
             }), DispatcherPriority.ApplicationIdle);
             if (Program.Smoke)
@@ -516,6 +578,7 @@ namespace AnnaDesktopPet
                 {
                     try
                     {
+                        string liveSmoke = VerifyLiveModelSmoke() + "\n" + VerifyGhostOutfitSmoke() + "\n" + VerifyUniform2OutfitSmoke() + "\n" + VerifyPortraitConversationSmoke();
                         if (pixelWidth < 1 || pixelHeight < 1 || alphaPixels.Length == 0) throw new Exception("Character resource invalid");
                         bool alpha = false, opaque = false;
                         int alphaMin = 255, alphaMax = 0, clickPixels = 0;
@@ -527,23 +590,39 @@ namespace AnnaDesktopPet
                         }
                         if (!alpha || !opaque) throw new Exception("Character requires transparent and visible pixels");
                         bubble.Visibility = Visibility.Collapsed;
+                        UpdateLayout();
                         double fit = Math.Min(character.ActualWidth / pixelWidth, character.ActualHeight / pixelHeight);
                         double offsetX = (character.ActualWidth - pixelWidth * fit) / 2;
                         double offsetY = (character.ActualHeight - pixelHeight * fit) / 2;
-                        bool checkedSolid = false, checkedClear = false;
-                        for (int y = 4; y < pixelHeight && (!checkedSolid || !checkedClear); y += 15)
-                            for (int x = 4; x < pixelWidth && (!checkedSolid || !checkedClear); x += 15)
+                        int checkedSolid = 0, checkedClear = 0, adjacent = 0, acrossEdge = 0;
+                        const int sampleCount = 16;
+                        for (int y = 4; y < pixelHeight && (checkedSolid < sampleCount || checkedClear < sampleCount); y += 7)
+                            for (int x = 4; x < pixelWidth && (checkedSolid < sampleCount || checkedClear < sampleCount); x += 7)
                             {
                                 byte a = alphaPixels[(y * pixelWidth + x) * 4 + 3];
-                                if ((!checkedSolid && a >= 128) || (!checkedClear && a == 0))
+                                if ((checkedSolid < sampleCount && a >= 128) || (checkedClear < sampleCount && a == 0))
                                 {
                                     Point screen = character.PointToScreen(new Point(offsetX + (x + .5) * fit, offsetY + (y + .5) * fit));
-                                    bool hit = IsOpaqueAt(screen);
-                                    if (a >= 128) { if (!hit) throw new Exception("Opaque alpha hit test failed"); checkedSolid = true; }
-                                    else { if (hit) throw new Exception("Transparent alpha hit test failed"); checkedClear = true; }
+                                    // Windows receives integer screen pixels. At normal pet size several
+                                    // texture pixels can share one screen pixel, particularly at hair edges.
+                                    Point reachable = character.PointFromScreen(screen);
+                                    int rx = (int)Math.Floor((reachable.X-offsetX)/fit);
+                                    int ry = (int)Math.Floor((reachable.Y-offsetY)/fit);
+                                    if (rx != x || ry != y)
+                                    {
+                                        adjacent++;
+                                        if (rx >= 0 && ry >= 0 && rx < pixelWidth && ry < pixelHeight
+                                            && (alphaPixels[(ry * pixelWidth + rx) * 4 + 3] >= 32) != (a >= 32)) acrossEdge++;
+                                        continue;
+                                    }
+                                    // The shortcuts cover the desktop at their own circular hit targets.
+                                    if (HitActionRail(screen)) continue;
+                                    if (IsOpaqueAt(screen) != (a >= 128))
+                                        throw new Exception(String.Format("Portrait hit mismatch at texture ({0}, {1}), screen {2}, alpha {3}",x,y,screen,a));
+                                    if (a >= 128) checkedSolid++; else checkedClear++;
                                 }
                             }
-                        if (!checkedSolid || !checkedClear) throw new Exception("Alpha hit test samples missing");
+                        if (checkedSolid < sampleCount || checkedClear < sampleCount) throw new Exception("Alpha hit test samples missing");
                         AutonomousMotion autoTest = new AutonomousMotion();
                         double initial = autoTest.Update(24, 100, 100, 0, 500, true);
                         if (initial != 100 || autoTest.Walking) throw new Exception("Autonomous motion started too early");
@@ -573,7 +652,9 @@ namespace AnnaDesktopPet
                         if (focusEnd.HasValue || alarms != 1) throw new Exception("Focus alarm must fire exactly once even if local speech is disabled and pet sleeps");
                         focusVoiceSmokeHook = null; settings.Sleeping = false;
                         settings.Sleeping = true; Animate(null, EventArgs.Empty); settings.Sleeping = false;
-                        OpenPanel(); if (panel == null || !panel.IsVisible) throw new Exception("Panel failed"); panel.Close();
+                        OpenPanel();
+                        if (chatWindow == null || !chatWindow.IsVisible || chatWindow.SelectedCompanionTab != "settings") throw new Exception("Companion settings failed");
+                        chatWindow.Close();
                         GptChatWindow checkChat = new GptChatWindow(this, new List<ChatMessage>(), new GptSettings(), Say, delegate(bool active) { thinking = active; }, OnAssistantReply, voice.Stop, delegate { return false; });
                         checkChat.Show(); checkChat.VerifyNoKeySmoke(); checkChat.Close();
                         GptChatWindow musicCheck = new GptChatWindow(this, new List<ChatMessage>(), new GptSettings(), Say, delegate(bool active) { }, null, null, delegate { return false; }, delegate(string text) { return System.Threading.Tasks.Task.FromResult(text == "播放一首晴天" ? "测试点歌已处理" : null); });
@@ -607,81 +688,7 @@ namespace AnnaDesktopPet
                                 throw new Exception("QQ candidate smoke must dispatch the first displayed track exactly once");
                         }
                         finally { candidateChat.Close(); candidateRouter.Dispose(); }
-                        foreach (string pose in MotionController.PoseNames)
-                        {
-                            SetFrame(pose);
-                            MotionFrame frame = motions.Get(pose); Int32Rect bounds = frame.SubjectBounds();
-                            if (!object.ReferenceEquals(alphaPixels, frame.Pixels) || bounds.Width <= 0 || bounds.Height <= 0) throw new Exception("Pose alpha cache failed: " + pose);
-                        }
-                        if (motions.HasWaveAnimation)
-                        {
-                            MotionFrame first = motions.GetAt("wave", 0), second = motions.GetAt("wave", .3);
-                            if (Object.ReferenceEquals(first, second)) throw new Exception("Wave animation frames did not advance");
-                            double baseline = MotionController.LowerBodyCenterX(first);
-                            int foot = first.SubjectBounds().Y + first.SubjectBounds().Height;
-                            foreach (double frameTime in new double[] { .12, .23, .34 })
-                            {
-                                MotionFrame candidate = motions.GetAt("wave", frameTime);
-                                Int32Rect b = candidate.SubjectBounds();
-                                if (Math.Abs(MotionController.LowerBodyCenterX(candidate) - baseline) > 4 || Math.Abs(b.Y + b.Height - foot) > 2)
-                                    throw new Exception("Wave frame lower body or feet are not aligned");
-                            }
-                            bool previousEnabled = mediaSettings.MotionsEnabled;
-                            mediaSettings.MotionsEnabled = true; PlayMotion("wave", 3); Animate(null, EventArgs.Empty);
-                            if (breathe.ScaleX != 1 || breathe.ScaleY != 1 || floatAt.Y != 0 || tilt.Angle != 0) throw new Exception("Wave body transforms are not fixed");
-                            poseUntil = 0; mediaSettings.MotionsEnabled = previousEnabled;
-                            SetFrame("wave", second);
-                            if (!Object.ReferenceEquals(alphaPixels, second.Pixels) || pixelWidth != second.Width || pixelHeight != second.Height) throw new Exception("Animated frame hit test cache not updated");
-                            fit = Math.Min(character.ActualWidth / pixelWidth, character.ActualHeight / pixelHeight);
-                            offsetX = (character.ActualWidth - pixelWidth * fit) / 2;
-                            offsetY = (character.ActualHeight - pixelHeight * fit) / 2;
-                            bool animatedSolid = false, animatedClear = false;
-                            for (int y = 4; y < pixelHeight && (!animatedSolid || !animatedClear); y += 15)
-                                for (int x = 4; x < pixelWidth && (!animatedSolid || !animatedClear); x += 15)
-                                {
-                                    byte a = alphaPixels[(y * pixelWidth + x) * 4 + 3];
-                                    if ((!animatedSolid && a >= 128) || (!animatedClear && a == 0))
-                                    {
-                                        Point screen = character.PointToScreen(new Point(offsetX + (x + .5) * fit, offsetY + (y + .5) * fit));
-                                        bool hit = IsOpaqueAt(screen);
-                                        if (a >= 128) { if (!hit) throw new Exception("Animated opaque hit test failed"); animatedSolid = true; }
-                                        else { if (hit) throw new Exception("Animated transparent hit test failed"); animatedClear = true; }
-                                    }
-                                }
-                            if (!animatedSolid || !animatedClear) throw new Exception("Animated hit test samples missing");
-                            // Exercise the live transition path without sending audio or network requests.
-                            bool oldSmoke = Program.Smoke, oldEnabled = mediaSettings.MotionsEnabled;
-                            try
-                            {
-                                Program.Smoke = false; mediaSettings.MotionsEnabled = true;
-                                SetFrame("wave", first); SetFrame("wave", second);
-                                VerifyTransitionComposition(first, second);
-                                if (!Object.ReferenceEquals(previousMotionFrame, first) || transitionDuration <= 0 || transitionDuration >= 1.0 / 9)
-                                    throw new Exception("Arm frame transition was not prepared correctly");
-                            }
-                            finally { Program.Smoke = oldSmoke; mediaSettings.MotionsEnabled = oldEnabled; previousMotionFrame = null; previousCharacter.Opacity = 0; previousCharacter.Source = null; }
-                        }
-                        if (motions.HasWalkAnimation)
-                        {
-                            int count = motions.WalkFrameCount; double rate = motions.WalkFramesPerSecond;
-                            if (count != 4 && count != 8) throw new Exception("Unsupported walking frame count");
-                            MotionFrame firstStep = motions.GetAt("walk", .1 / rate), previousStep = null;
-                            for (int i = 0; i < count; i++)
-                            {
-                                MotionFrame step = motions.GetAt("walk", (i + .1) / rate); Int32Rect bounds = step.SubjectBounds();
-                                if (previousStep != null && Object.ReferenceEquals(previousStep, step)) throw new Exception("Walking frame did not advance");
-                                if (bounds.Height < 10 || bounds.X <= 0 || (count == 8 && bounds.Y <= 0) || bounds.X + bounds.Width >= step.Width || bounds.Y + bounds.Height >= step.Height) throw new Exception("Walking frame blank or cropped: " + i + " " + bounds.ToString() + " canvas=" + step.Width + "x" + step.Height);
-                                previousStep = step;
-                            }
-                            if (!Object.ReferenceEquals(firstStep, motions.GetAt("walk", (count + .1) / rate))) throw new Exception("Walking frame cycle invalid");
-                        }
-                        if (motions.HasBlinkAnimation && Object.ReferenceEquals(motions.GetAt("idle", .5), motions.GetAt("idle", .14))) throw new Exception("Blink did not advance");
-                        if (motions.HasSpeechAnimation && Object.ReferenceEquals(motions.GetAt("speak", 0), motions.GetAt("speak", .35))) throw new Exception("Mouth animation did not advance");
-                        if (motions.HasHappyAnimation && Object.ReferenceEquals(motions.GetAt("happy", 0), motions.GetAt("happy", .3))) throw new Exception("Happy animation did not advance");
-                        if (motions.HasBlinkAnimation) VerifyAnchoredFrames("idle", new double[] { .5, .05, .14 });
-                        if (motions.HasSpeechAnimation) VerifyAnchoredFrames("speak", new double[] { 0, .18, .35, .51 });
-                        if (motions.HasHappyAnimation) VerifyAnchoredFrames("happy", new double[] { 0, .15, .3, .44 });
-                        SetFrame("idle");
+                        RenderLivePose("idle", elapsed.Elapsed.TotalSeconds);
                         OpenMedia(); if (mediaWindow == null || !mediaWindow.IsVisible) throw new Exception("Media settings failed"); mediaWindow.VerifySmoke(); mediaWindow.Close();
                         if (Lines.Length != LocalJapaneseLines.Length) throw new Exception("Local Japanese line mapping length mismatch");
                         foreach (string action in new string[] { "wave", "happy", "eat" }) if (!ContainsJapaneseKana(ActionJapanese(action))) throw new Exception("Action voice must be Japanese");
@@ -690,9 +697,14 @@ namespace AnnaDesktopPet
                         SpeechSettings freshMedia = new SpeechSettings();
                         if (freshMedia.VoiceLanguage != "ja" || freshMedia.Engine != "gpt-sovits" || freshMedia.Endpoint != "http://127.0.0.1:9880" || freshMedia.AutoReadReplies || freshMedia.ReadLocal) throw new Exception("Japanese media defaults invalid");
                         if (voice.IsSpeaking) throw new Exception("Smoke must never play audio");
-                        string report = "PASS\nWPF window initialized\nPNG loaded: " + pixelWidth + " x " + pixelHeight + "\nAlpha range: " + alphaMin + ".." + alphaMax + "; clickable pixels >= 32: " + clickPixels + "\nAlpha hit testing: opaque hit + transparent pass-through verified\nSettings parsed without mutation\nFocus start and completion passed\nSleep animation initialized\nControl panel opened and closed\nGPT chat window initialized; missing-key send blocked; draft preserved; password settings initialized\nSix pose states initialized with current bitmap alpha cache; " + motions.Status + "\nAnimation resources: wave=" + motions.HasWaveAnimation + "; blink=" + motions.HasBlinkAnimation + "; speak=" + motions.HasSpeechAnimation + "\nJapanese local lines mapped to all Chinese interaction lines\nJapanese voice preference and release defaults verified\nSpeech and motion settings initialized; no audio was played\nSmoke made no external network requests; GPT requests only on explicit user send\nNo autostart; no admin requirement\n";
-                        report += "Walk animation resource: " + motions.HasWalkAnimation + "; frames=" + motions.WalkFrameCount + "; fps=" + motions.WalkFramesPerSecond + "\nAutonomous idle delay and interruption verified\n"; report += "Happy animation resource: " + motions.HasHappyAnimation + "\nWave feet alignment and fixed body transforms verified\nWPF transition alpha verified at five progress values for normal and sleep opacity\n";
+                        string report = "PASS\nWPF window initialized\nPNG loaded: " + pixelWidth + " x " + pixelHeight + "\nAlpha range: " + alphaMin + ".." + alphaMax + "; clickable pixels >= 32: " + clickPixels + "\nAlpha hit testing: opaque hit + transparent pass-through verified\nSettings parsed without mutation\nFocus start and completion passed\nSleep animation initialized\nControl panel opened and closed\nGPT chat window initialized; missing-key send blocked; draft preserved; password settings initialized\nCurrent portrait poses initialized with the displayed model alpha cache\nJapanese local lines mapped to all Chinese interaction lines\nJapanese voice preference initialized; audio switches default off\nSpeech and motion settings initialized; no audio was played\nSmoke made no external network requests; GPT requests only on explicit user send\nNo autostart; no admin requirement\n";
+                        report += String.Format("Screen-coordinate samples: {0} solid, {1} transparent; {2} projected to neighboring texture pixels, {3} across alpha edges\n",checkedSolid,checkedClear,adjacent,acrossEdge);
+                        report += liveSmoke + "\n";
+                        report += "Chat toolbar settings button opened settings; local chat history clear available; manual memory controls absent\n";
+                        report += "Autonomous idle delay and interruption verified\n";
                         report += "QQ candidate selection in no-key chat: search -> 第一首 -> first displayed track exactly once; local roles only; mock network and playback\n";
+                        VerifyActionRailSmoke();
+                        report += "Five pet shortcuts: circular hit targets, transparent gaps, shared chat and music routes verified\n";
                         VerifyDesktopShellSmoke();
                         report += "Tray/hotkey checks: native registration and cleanup; hide/restore panels and position; chat restore; stop speech; conflict fallback; no audio or network\n";
                         if (Program.SmokePath != null) File.WriteAllText(Program.SmokePath, report, System.Text.Encoding.UTF8);
@@ -709,8 +721,66 @@ namespace AnnaDesktopPet
             }
         }
 
+        private string VerifyLiveModelSmoke()
+        {
+            string original = Appearance.Outfit;
+            bool enabled = mediaSettings.MotionsEnabled;
+            try
+            {
+                if (original != Appearance.Uniform1Portrait) SelectSmokeOutfit(Appearance.Uniform1Portrait);
+                if (liveModel == null || !File.Exists(Appearance.ModelManifest) || liveModel.HasGlasses || liveModel.HasIndependentFlames)
+                    throw new Exception("School uniform 1 did not load its current model.");
+                mediaSettings.MotionsEnabled = true;
+                foreach (string pose in new[] { "idle", "wave", "happy", "walk", "think", "eat", "speak", "rest", "sleep" })
+                {
+                    PlayMotion(pose, 2);
+                    AnimateAt(poseStarted + .02);
+                    AnimateAt(poseStarted + .48);
+                    if (activePose != (pose == "rest" ? "sleep" : pose) ||
+                        !Object.ReferenceEquals(character.Source, liveModel.Frame) ||
+                        !Object.ReferenceEquals(alphaPixels, liveModel.Pixels))
+                        throw new Exception("School uniform 1 model frame or hit cache missing for " + pose);
+                }
+                VerifyIdleGestureFrames();
+                return "Live2D: school uniform 1 loaded; nine pose routes stay on the portrait and its alpha hit cache; five idle gestures and neutral return verified";
+            }
+            finally
+            {
+                poseUntil = 0;
+                mediaSettings.MotionsEnabled = enabled;
+                if (Appearance.Outfit != original) SelectSmokeOutfit(original);
+            }
+        }
+
+        private void VerifyIdleGestureFrames()
+        {
+            liveModel.Render(0, 0, 0, 1, 0, new IdleGesturePose());
+            byte[] neutral = (byte[])liveModel.Pixels.Clone();
+            int stride = liveModel.Frame.PixelWidth * 4;
+            foreach (IdleGesture kind in Enum.GetValues(typeof(IdleGesture)))
+            {
+                if (kind == IdleGesture.None) continue;
+                IdleGesturePose pose = IdleGestures.Sample(kind, IdleGestures.Duration(kind) * .5, 1);
+                liveModel.Render(0, -1, 1, 1, 0, pose);
+                int end = (Live2DPetModel.OverheadPadding+(int)(Live2DPetModel.PortraitHeight*.62))*stride;
+                int differences = 0;
+                for (int i = 0; i < end && differences < 32; i++)
+                    if (neutral[i] != liveModel.Pixels[i]) differences++;
+                if (differences < 32) throw new Exception("No visible Live2D gesture in its expected region: " + kind);
+                byte[] posePixels = (byte[])liveModel.Pixels.Clone();
+                liveModel.Render(0, 1, -1, 1, 0, pose);
+                for (int i = 0; i < posePixels.Length; i++)
+                    if (posePixels[i] != liveModel.Pixels[i]) throw new Exception("Mouse changed action gaze: " + kind);
+            }
+            liveModel.Render(0, 0, 0, 1, 0, new IdleGesturePose());
+            for (int i = 0; i < neutral.Length; i++)
+                if (neutral[i] != liveModel.Pixels[i]) throw new Exception("Live2D gesture remained after return to idle");
+        }
+
         private void OnPointerDown(object sender, MouseButtonEventArgs e)
         {
+            if (Appearance.IsGhostPortrait) ghostGestures.NoteInteraction(elapsed.Elapsed.TotalSeconds);
+            if (Appearance.Outfit == Appearance.Uniform2Portrait) uniform2Director.NoteInteraction(elapsed.Elapsed.TotalSeconds);
             autonomous.Interrupt(elapsed.Elapsed.TotalSeconds); pressed = true; dragged = false;
             pressScreen = PointToScreen(e.GetPosition(this)); pressWindow = new Point(Left, Top);
             CaptureMouse(); e.Handled = true;
@@ -742,7 +812,9 @@ namespace AnnaDesktopPet
                 bool doubleClick = time - lastClickTime <= GetDoubleClickTime() / 1000.0 && Math.Abs(screen.X - lastClickScreen.X) <= 8 && Math.Abs(screen.Y - lastClickScreen.Y) <= 8;
                 clickTimer.Stop();
                 if (doubleClick) { lastClickTime = -100; OpenChat(); }
-                else { lastClickTime = time; lastClickScreen = screen; clickTimer.Start(); }
+                else {
+                    lastClickTime = time; lastClickScreen = screen; clickTimer.Start();
+                }
             }
         }
         private void KeepVisible()
@@ -755,8 +827,30 @@ namespace AnnaDesktopPet
         private void Pet()
         {
             if (settings.Sleeping) { Say("嗯……再眯一会儿。右键菜单可以叫醒我。", 4); return; }
+            if (TryStartGhostGesture(GhostGesture.PlayScare, elapsed.Elapsed.TotalSeconds)) return;
             happyUntil = elapsed.Elapsed.TotalSeconds + 1.2;
             Say("你好呀！", 4.5);
+        }
+
+        private bool TryStartGhostGesture(GhostGesture kind, double now)
+        {
+            if (liveModel == null || !Appearance.IsGhostPortrait || !mediaSettings.MotionsEnabled
+                || closing || hiddenForGame || changingOutfit || settings.Sleeping || thinking || voice.IsBusy
+                || (pressed && dragged) || (now < poseUntil && temporaryPose != "idle")) return false;
+            return ghostGestures.Trigger(kind, now);
+        }
+
+        private bool CanPerformUniform2Nod(double now, bool audioPlaying)
+        {
+            return liveModel != null && Appearance.Outfit == Appearance.Uniform2Portrait && mediaSettings.MotionsEnabled
+                && !closing && !hiddenForGame && !changingOutfit && !pressed && !settings.Sleeping && !audioPlaying
+                && !focusEnd.HasValue && !autonomous.Walking && (activeMenu == null || !activeMenu.IsOpen)
+                && (now >= poseUntil || temporaryPose == "idle");
+        }
+
+        private bool TryStartUniform2Nod(double now)
+        {
+            return !voice.IsBusy && CanPerformUniform2Nod(now,false) && uniform2Director.TryNod(now, idleGestures.Pose);
         }
         private void Say(string text, double seconds)
         {
@@ -766,21 +860,38 @@ namespace AnnaDesktopPet
         }
         private void Animate(object sender, EventArgs e)
         {
+            AnimateAt(elapsed.Elapsed.TotalSeconds);
+        }
+
+        private void AnimateAt(double t, Vector? pointerOverride = null, bool allowAutonomyInSmoke = false,
+            PortraitPlayback? playbackOverride = null)
+        {
             if (closing || hiddenForGame) return;
-            double t = elapsed.Elapsed.TotalSeconds;
+            PortraitPlayback playback = playbackOverride ?? voice.Playback;
+            bool portrait = HasConversationPortrait;
+            bool conversationAllowed = portrait && mediaSettings.MotionsEnabled && !settings.Sleeping && !changingOutfit && !(pressed && dragged);
+            bool requestPending = chatWindow != null && chatWindow.HasPendingModelTurn;
+            bool endedUnvoicedTurn = waitingForReplyMotion && !requestPending && !playback.Busy && t >= briefReplyUntil;
+            if (!conversationAllowed || playback.Audible || endedUnvoicedTurn) waitingForReplyMotion = false;
+            portraitConversation = !conversationAllowed ? PortraitConversationState.None
+                : playback.Audible ? PortraitConversationState.Speaking
+                : waitingForReplyMotion ? PortraitConversationState.Thinking : PortraitConversationState.None;
+            if (portrait && !conversationAllowed) liveModel.ResetConversationMotion();
             if (actionVoiceOperation >= 0 && t < actionVoiceDeadline && voice.IsBusy && voice.OperationId == actionVoiceOperation && !settings.Sleeping)
                 poseUntil = Math.Max(poseUntil, t + .25);
             else actionVoiceOperation = -1;
-            bool autoAllowed = !Program.Smoke && mediaSettings.MotionsEnabled && mediaSettings.AutonomousEnabled
-                && !pressed && !IsMouseOver && !settings.Sleeping && !thinking && !voice.IsBusy && !focusEnd.HasValue
-                && chatWindow == null && mediaWindow == null && panel == null && (activeMenu == null || !activeMenu.IsOpen)
-                && t >= poseUntil && bubble.Visibility != Visibility.Visible && !LifeActivity.Busy && !changingOutfit;
-            if (!autoAllowed) nextAutonomousGesture = Math.Max(nextAutonomousGesture, t + 25);
-            else if (t >= nextAutonomousGesture && motions.HasPoses)
+            bool chatAllowsIdle = chatWindow == null || (Appearance.Outfit == Appearance.Uniform2Portrait
+                && (!chatWindow.IsVisible || chatWindow.WindowState == WindowState.Minimized));
+            bool idleAllowed = (!Program.Smoke || allowAutonomyInSmoke) && mediaSettings.MotionsEnabled && mediaSettings.AutonomousEnabled
+                && !pressed && !settings.Sleeping && !thinking && !voice.IsBusy && !focusEnd.HasValue
+                && chatAllowsIdle && callWindow == null && mediaWindow == null
+                && voiceLevel.Visibility != Visibility.Visible && (activeMenu == null || !activeMenu.IsOpen)
+                && t >= poseUntil && bubble.Visibility != Visibility.Visible && !changingOutfit;
+            if (Appearance.Outfit == Appearance.OtterPortrait && idleAllowed && t >= nextOtterIdle)
             {
-                PlayMotion("think", 5);
-                nextAutonomousGesture = t + 150 + random.Next(150);
-                autoAllowed = false;
+                bool sleepy = ++otterIdleCount % 3 == 0 || (DateTime.Now.Hour < 6 && otterIdleCount % 2 == 0);
+                if (sleepy) PlayMotion("otterDoze", 4);
+                nextOtterIdle = t + 25;
             }
             Rect workArea = SystemParameters.WorkArea;
             Left = autonomous.Update(t, Left, Width, workArea.Left, workArea.Right, false);
@@ -789,94 +900,138 @@ namespace AnnaDesktopPet
             {
                 if (pressed && dragged) pose = "idle";
                 else if (settings.Sleeping) pose = "sleep";
-                else if (thinking) pose = "think";
+                else if (portraitConversation == PortraitConversationState.Speaking) pose = "speak";
+                else if (portraitConversation == PortraitConversationState.Thinking || (!portrait && thinking)) pose = "think";
                 else if (t < poseUntil) pose = temporaryPose;
                 else if (autonomous.Walking) pose = "walk";
-                else if (voice.IsSpeaking) pose = "speak";
+                else if (!portrait && voice.IsSpeaking) pose = "speak";
             }
-            string renderedPose=pose=="rest"?(motions.HasLifeAnimation?"sit":"sleep"):pose;
-            bool anchoredWaveNow=pose=="wave" && motions.HasWaveTrial;
-            if(anchoredWaveNow && !anchoredWaveTransform){waveScaleX=breathe.ScaleX;waveScaleY=breathe.ScaleY;waveFloat=floatAt.Y;waveTilt=tilt.Angle;}
-            anchoredWaveTransform=anchoredWaveNow;
-            SetFrame(renderedPose, mediaSettings.MotionsEnabled && !(pressed && dragged) ? motions.GetAt(renderedPose, (pose == "wave" || pose == "happy" || renderedPose=="sit") ? t - poseStarted : pose == "walk" ? t - autonomous.StartedAt : t) : motions.Get(renderedPose));
+            string renderedPose=pose=="rest"?"sleep":pose;
+            bool liveStanding = liveModel != null;
+            if (liveStanding)
+            {
+                if (mediaSettings.MotionsEnabled)
+                {
+                    bool ordinaryIdle = idleAllowed && renderedPose == "idle" && !playback.Busy;
+                    if (Appearance.IsGhostPortrait)
+                    {
+                        bool available = renderedPose == "idle" && !changingOutfit && !pressed && !voice.IsBusy
+                            && !settings.Sleeping && !thinking && (activeMenu == null || !activeMenu.IsOpen);
+                        ghostGestures.Update(t, available, idleAllowed);
+                        ordinaryIdle &= !ghostGestures.Pose.Face.ControlsGaze;
+                    }
+                    else if (Appearance.Outfit == Appearance.Uniform2Portrait)
+                    {
+                        if (settings.Sleeping || changingOutfit) uniform2Director.Reset();
+                        else uniform2Director.Update(t, ordinaryIdle, !endedUnvoicedTurn && CanPerformUniform2Nod(t,playback.Audible), !idleGestures.Pose.ControlsGaze);
+                        ordinaryIdle &= !uniform2Director.Pose.Face.ControlsGaze;
+                        if (uniform2Director.Current == Uniform2Gesture.Nod && pose == "think" && portraitConversation == PortraitConversationState.None)
+                            pose = renderedPose = "idle";
+                    }
+                    idleGestures.Update(t, ordinaryIdle);
+                }
+                else { idleGestures.Reset(); ghostGestures.Reset(); uniform2Director.Reset(); }
+                RenderLivePose(renderedPose, t, pointerOverride, playback.Mouth);
+            }
+            else
+            {
+                idleGestures.Reset();
+                SetFrame(renderedPose);
+            }
+            // The front model's soles are 98% down its canvas. A vertical breath about
+            // that point keeps both shoes planted throughout all standing gestures.
+            Point anchor = new Point(.5, liveStanding ? (Live2DPetModel.OverheadPadding+.98*Live2DPetModel.PortraitHeight)/liveModel.Frame.PixelHeight : .88);
+            if (character.RenderTransformOrigin != anchor)
+                character.RenderTransformOrigin = anchor;
             stateBadge.Visibility = Visibility.Collapsed;
             character.Opacity = 1;
             characterLayer.Opacity = 1;
             breathe.ScaleX = 1; breathe.ScaleY = 1; floatAt.Y = 0; tilt.Angle = 0;
-            if (!mediaSettings.MotionsEnabled || (pressed && dragged)) { previousMotionFrame = null; previousCharacter.Opacity = 0; return; }
-            breathe.ScaleX = 1 + Math.Sin(t * 2) * .006;
-            breathe.ScaleY = 1 + Math.Sin(t * 2) * .009;
-            floatAt.Y = Math.Sin(t * 1.8) * 2; tilt.Angle = Math.Sin(t * 1.3) * .5;
+            if (!mediaSettings.MotionsEnabled || (pressed && dragged)) return;
+            if (liveStanding) breathe.ScaleY = 1 + Math.Sin(t * 1.8) * .003;
+            else
+            {
+                breathe.ScaleX = 1 + Math.Sin(t * 2) * .006;
+                breathe.ScaleY = 1 + Math.Sin(t * 2) * .009;
+                floatAt.Y = Math.Sin(t * 1.8) * 2; tilt.Angle = Math.Sin(t * 1.3) * .5;
+            }
             if(pose=="rest") { tilt.Angle=-2;floatAt.Y=2;stateBadge.Text="休息中";stateBadge.FontSize=12;stateBadge.Visibility=Visibility.Visible; }
             if (pose == "sleep")
             {
                 breathe.ScaleX = 1 + Math.Sin(t * 1.5) * .006; breathe.ScaleY = .985 + Math.Sin(t * 1.5) * .008;
                 floatAt.Y = 2; tilt.Angle = -2; characterLayer.Opacity = .9; stateBadge.Text = "Z z z"; stateBadge.FontSize = 17;
             }
-            // The hand is animated by the sprite frames. Keep the torso and feet fixed.
-            if (pose == "wave") { breathe.ScaleX = anchoredWaveNow?waveScaleX:1; breathe.ScaleY = anchoredWaveNow?waveScaleY:1; floatAt.Y = anchoredWaveNow?waveFloat:0; tilt.Angle = anchoredWaveNow?waveTilt:0; }
-            if (pose == "walk") { breathe.ScaleX = autonomous.Direction; breathe.ScaleY = 1; floatAt.Y = 0; tilt.Angle = 0; }
+            if (pose == "wave") { breathe.ScaleX = breathe.ScaleY = 1; floatAt.Y = tilt.Angle = 0; }
+            if (pose == "walk" && !liveStanding) { breathe.ScaleX = autonomous.Direction; breathe.ScaleY = 1; floatAt.Y = 0; tilt.Angle = 0; }
             if (pose == "happy") { floatAt.Y = -Math.Abs(Math.Sin(t * 4)) * 4; tilt.Angle = 0; stateBadge.Text = "✦"; stateBadge.FontSize = 23; }
-            if (pose == "think") { tilt.Angle = Math.Sin(t * 1.8) * 1.1; stateBadge.Text = "● ● ●"; stateBadge.FontSize = 9; }
+            if (pose == "think") { if (portraitConversation == PortraitConversationState.None) tilt.Angle = Math.Sin(t * 1.8) * 1.1; stateBadge.Text = "● ● ●"; stateBadge.FontSize = 9; }
             if (pose == "eat") { breathe.ScaleX = 1 + Math.Sin(t * 8) * .008; breathe.ScaleY = 1 + Math.Sin(t * 8) * .005; tilt.Angle = Math.Sin(t * 4) * .7; }
-            if (pose == "speak") { breathe.ScaleY = 1 + Math.Abs(Math.Sin(t * 10)) * .012; stateBadge.Text = "♪"; stateBadge.FontSize = 22; }
+            if (pose == "speak") { if (!liveStanding) breathe.ScaleY = 1 + Math.Abs(Math.Sin(t * 10)) * .012; stateBadge.Text = "♪"; stateBadge.FontSize = 22; }
             if (pose == "sleep" || pose == "think" || pose == "happy" || pose == "speak")
             { stateBadge.Visibility = Visibility.Visible; stateBadge.Opacity = .6 + Math.Sin(t * 2) * .25; badgeFloat.Y = -Math.Sin(t * 2) * 3; }
-            if (previousMotionFrame != null)
-            {
-                double blend = Math.Max(0, Math.Min(1, (t - transitionStart) / transitionDuration));
-                blend = blend * blend * (3 - 2 * blend);
-                double opacity = characterLayer.Opacity;
-                ApplyTransition(previousCharacter, character, characterLayer, blend, opacity);
-                if (blend >= 1) { previousCharacter.Opacity = 0; previousCharacter.Source = null; previousMotionFrame = null; }
-            }
         }
 
-        internal static void ApplyTransition(Image previous, Image current, Grid layer, double blend, double opacity)
+        private IdleGesturePose PortraitExpression(string pose, double t)
         {
-            // Keep the lower frame fully visible under the fading-in frame. Fading both
-            // makes overlapping pixels partially transparent in a transparent window.
-            layer.Opacity = opacity;
-            previous.Opacity = 1;
-            current.Opacity = blend;
+            IdleGesturePose target = pose == "idle" ? idleGestures.Pose : new IdleGesturePose { ControlsGaze = true };
+            switch (pose)
+            {
+                case "sleep": case "rest": case "sit":
+                    target.EyeClosure = 1; target.HeadPitch = .24; target.ListenTilt = -.18; break;
+                case "think":
+                    target.EyeLook = .28; target.ListenTilt = -.28; target.Daydream = .20; break;
+                case "happy": case "eat":
+                    target.SnackSmile = .68; target.ListenTilt = .14; break;
+                case "wave":
+                    target.HeadPitch = .18 + .14*Math.Sin(t*2.6); target.SnackSmile = .42; break;
+                case "walk":
+                    target.WeightShift = .13*Math.Sin(t*2.4); break;
+            }
+            if (standingPose == null) { standingPose=pose; standingExpression=target; standingTransitionStart=t-1; }
+            if (pose != standingPose) { standingPose=pose; standingTransitionStart=t; standingTransitionFrom=standingExpression; }
+            double blend = Math.Max(0, Math.Min(1,(t-standingTransitionStart)/.4));
+            standingExpression=IdleGesturePose.Blend(standingTransitionFrom,target,blend*blend*(3-2*blend));
+            return standingExpression;
+        }
+
+        private void RenderLivePose(string pose, double t, Vector? pointerOverride = null, double mouth = 0)
+        {
+            bool entering = character.Source != liveModel.Frame;
+            if (entering) SetStandingMargin(true);
+            if (entering || activePose != pose || t < lastLiveFrame || t - lastLiveFrame >= 1.0 / 60 - .001)
+            {
+                IdleGesturePose gesture = PortraitExpression(pose,t);
+                if (pose != "idle") gesture.ControlsGaze = true;
+                GhostGesturePose action = Appearance.IsGhostPortrait ? ghostGestures.Pose : new GhostGesturePose();
+                var uniform2 = Appearance.Outfit == Appearance.Uniform2Portrait ? uniform2Director.Pose : new Uniform2GesturePose();
+                if (portraitConversation != PortraitConversationState.None && uniform2Director.Current != Uniform2Gesture.Nod)
+                    uniform2 = new Uniform2GesturePose();
+                if (entering || !mediaSettings.MotionsEnabled) liveFace.Reset();
+                Vector target = new Vector();
+                if (mediaSettings.MotionsEnabled && !gesture.ControlsGaze && !action.Face.ControlsGaze && !uniform2.Face.ControlsGaze && !pressed)
+                {
+                    System.Drawing.Point screen;
+                    if (pointerOverride.HasValue) target = pointerOverride.Value;
+                    else if (PresentationSource.FromVisual(character) != null && GetCursorPos(out screen))
+                    {
+                        Point local = character.PointFromScreen(new Point(screen.X, screen.Y));
+                        target = LiveFaceTracking.Target(local, character.ActualWidth, character.ActualHeight,
+                                                         liveModel.Frame.PixelWidth, liveModel.Frame.PixelHeight, Live2DPetModel.OverheadPadding, liveModel.EyeHeight, liveModel.EyeCenterX);
+                    }
+                }
+                liveModel.OtterDozeTime = pose == "otterDoze" && Appearance.Outfit == Appearance.OtterPortrait
+                    && mediaSettings.MotionsEnabled && !changingOutfit && !pressed && !settings.Sleeping
+                    ? Math.Max(0, t - poseStarted) : -1;
+                liveModel.RenderTracked(liveFace,t,target,gesture,mouth,mediaSettings.MotionsEnabled,action,uniform2,portraitConversation);
+                lastLiveFrame = t;
+            }
+            character.Source = bitmap = liveModel.Frame;
+            pixelWidth = bitmap.PixelWidth;
+            pixelHeight = bitmap.PixelHeight;
+            alphaPixels = liveModel.Pixels;
+            activePose = pose;
         }
         private void PlayMotion(string pose, double seconds) { autonomous.Interrupt(elapsed.Elapsed.TotalSeconds); actionVoiceOperation = -1; temporaryPose = pose; poseStarted = elapsed.Elapsed.TotalSeconds; poseUntil = poseStarted + seconds; }
-        private static void VerifyTransitionComposition(MotionFrame first, MotionFrame second)
-        {
-            if (first.Width != second.Width || first.Height != second.Height) throw new Exception("Transition frame sizes differ");
-            Grid layer = new Grid { Width = first.Width, Height = first.Height };
-            Image previous = new Image { Source = first.Image, Stretch = Stretch.Fill };
-            Image current = new Image { Source = second.Image, Stretch = Stretch.Fill };
-            layer.Children.Add(previous); layer.Children.Add(current);
-            Size size = new Size(first.Width, first.Height); layer.Measure(size); layer.Arrange(new Rect(size)); layer.UpdateLayout();
-            foreach (double opacity in new double[] { 1.0, .9 })
-                foreach (double blend in new double[] { .1, .25, .5, .75, .9 })
-                {
-                    ApplyTransition(previous, current, layer, blend, opacity);
-                    RenderTargetBitmap render = new RenderTargetBitmap(first.Width, first.Height, 96, 96, PixelFormats.Pbgra32);
-                    render.Render(layer);
-                    byte[] pixels = new byte[first.Width * first.Height * 4]; render.CopyPixels(pixels, first.Width * 4, 0);
-                    long total = 0, count = 0;
-                    for (int i = 3; i < pixels.Length; i += 4)
-                        if (first.Pixels[i] >= 250 && second.Pixels[i] >= 250) { total += pixels[i]; count++; }
-                    if (count < 10000 || (double)total / count < 250 * opacity - 4)
-                        throw new Exception("Character became transparent during a transition: opacity=" + opacity + ", blend=" + blend);
-                }
-        }
-        private void VerifyAnchoredFrames(string pose, double[] times)
-        {
-            MotionFrame first = motions.GetAt(pose, times[0]);
-            double baseline = MotionController.LowerBodyCenterX(first);
-            Int32Rect firstBounds = first.SubjectBounds();
-            int foot = firstBounds.Y + firstBounds.Height;
-            foreach (double time in times)
-            {
-                MotionFrame current = motions.GetAt(pose, time);
-                Int32Rect bounds = current.SubjectBounds();
-                if (Math.Abs(MotionController.LowerBodyCenterX(current) - baseline) > 5 || Math.Abs(bounds.Y + bounds.Height - foot) > 2)
-                    throw new Exception(pose + " animation lower body or feet are not aligned");
-            }
-        }
         private static bool ContainsJapaneseKana(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return false;
@@ -912,15 +1067,15 @@ namespace AnnaDesktopPet
         }
         internal void ReactToReply(string text)
         {
-            if(settings.Sleeping || !mediaSettings.MotionsEnabled)return;
+            if(settings.Sleeping || !mediaSettings.MotionsEnabled || HasConversationPortrait)return;
             string pose=System.Text.RegularExpressions.Regex.IsMatch(text,"难过|伤心|辛苦|担心")?"think":"speak";
             PlayMotion(pose,4);
         }
         private void RunMotion(string pose)
         {
-            if(pose=="sit" && !motions.HasLifeAnimation){Say("坐下动画已为校服2和幽灵服准备好，先换装试试吧。",6);return;}
+            if(pose=="sit")pose="rest";
             if (pose == "sleep") { settings.Sleeping = true; voice.Stop(); }
-            else { settings.Sleeping = false; PlayMotion(pose, pose=="sit"?18:pose == "eat" ? 5 : 3); SpeakAction(pose); }
+            else { settings.Sleeping = false; PlayMotion(pose, pose=="rest"?18:pose == "eat" ? 5 : 3); SpeakAction(pose); }
             if (pose == "idle") { poseUntil = 0; voice.Stop(); }
             settings.Save();
         }
@@ -929,7 +1084,7 @@ namespace AnnaDesktopPet
         {
             if (mediaWindow != null && !mediaWindow.IsVisible) mediaWindow.Show();
             if (mediaWindow != null) { if (mediaWindow.WindowState == WindowState.Minimized) mediaWindow.WindowState = WindowState.Normal; mediaWindow.Activate(); return; }
-            mediaWindow = new PetMediaWindow(voice, mediaSettings, ApplyMediaSettings, RunMotion, motions);
+            mediaWindow = new PetMediaWindow(voice, mediaSettings, ApplyMediaSettings, RunMotion, character);
             mediaWindow.Closed += delegate { mediaWindow = null; };
             mediaWindow.Show(); mediaWindow.Activate();
         }
@@ -1017,123 +1172,63 @@ namespace AnnaDesktopPet
         {
             if(activeMenu!=null)activeMenu.IsOpen=false;
             autonomous.Interrupt(elapsed.Elapsed.TotalSeconds);
-            Action[] commands={OpenChat,delegate{new MusicPanel().Show();},Appearance.Show,OpenFocusInput,delegate{routine.ShowSettings();},delegate{RunMotion("think");},delegate{RunMotion("idle");},delegate{RunMotion("idle");},delegate{RunMotion("sleep");},delegate{RunMotion("idle");},SleepToggle,OpenPanel,OpenMedia,delegate{if(desktopShell!=null)desktopShell.ShowHelp();},delegate{mediaSettings.AutonomousEnabled=!mediaSettings.AutonomousEnabled;mediaSettings.Save();autonomous.Interrupt(elapsed.Elapsed.TotalSeconds);},delegate{settings.OnTop=!settings.OnTop;Topmost=settings.OnTop;settings.Save();},delegate{focusEnd=null;Say("暂停一下也没关系。",4);},delegate{if(desktopShell!=null)desktopShell.HideAll();},delegate{Close();}};
+            Action[] commands={OpenChat,delegate{ShowCompanionTab("music");},Appearance.Show,OpenFocusInput,delegate{routine.ShowSettings();},delegate{RunMotion("think");},delegate{RunMotion("idle");},delegate{RunMotion("idle");},delegate{RunMotion("sleep");},delegate{RunMotion("idle");},SleepToggle,OpenPanel,OpenMedia,delegate{if(desktopShell!=null)desktopShell.ShowHelp();},delegate{mediaSettings.AutonomousEnabled=!mediaSettings.AutonomousEnabled;mediaSettings.Save();autonomous.Interrupt(elapsed.Elapsed.TotalSeconds);},delegate{settings.OnTop=!settings.OnTop;Topmost=settings.OnTop;settings.Save();},delegate{focusEnd=null;Say("暂停一下也没关系。",4);},delegate{if(desktopShell!=null)desktopShell.HideAll();},delegate{Close();}};
             var expanded=new List<Action>(commands);expanded.Add(delegate{RunMotion("sit");});expanded.Add(OpenVoiceInput);
             activeMenu=PetQuickMenu.Create(expanded.ToArray(),settings.Sleeping,mediaSettings.AutonomousEnabled,settings.OnTop,focusEnd.HasValue);
             activeMenu.PlacementTarget=this;activeMenu.Placement=PlacementMode.MousePoint;activeMenu.IsOpen=true;
         }
-        private void LegacyMenu()
+
+        private void OpenChat() { ShowCompanionTab("chat"); }
+
+        internal void ShowCompanionTab(string tab)
         {
-            ContextMenu menu = new ContextMenu();
-            if (desktopShell != null)
+            if (closing || hiddenForGame) return;
+            if (chatWindow == null)
             {
-                menu.Items.Add(Item("隐藏桌宠与面板 · Ctrl+Alt+H", desktopShell.HideAll));
-                menu.Items.Add(Item("托盘与快捷键说明", desktopShell.ShowHelp));
-                menu.Items.Add(new Separator());
+                chatWindow = new GptChatWindow(this, chatHistory, gptSettings, Say, delegate(bool active) { thinking = active; }, OnAssistantReply, voice.Stop, delegate { return mediaSettings.AutoReadReplies && !settings.Sleeping; }, localMusic.Handle, localMusic.CancelPending, localMusic, null,
+                    delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.BeginStream(); },
+                    delegate(string sentence) { if (!Program.Smoke && !closing && !hiddenForGame) voice.AppendStream(sentence); },
+                    delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.CompleteStream(); });
+                PlaceCompanionPanel(chatWindow);
+                BindPortraitChat(chatWindow);
+                chatWindow.Closed += delegate { chatWindow = null; thinking = false; focusLabel = null; };
             }
-            menu.Items.Add(Item("换装与场景", Appearance.Show));
-            menu.Items.Add(Item("作息问候设置", delegate { routine.ShowSettings(); }));
-            menu.Items.Add(Item("正在播放 · 音乐控制", delegate { new MusicPanel().Show(); }));
-            autonomous.Interrupt(elapsed.Elapsed.TotalSeconds); activeMenu = menu;
-            menu.FontFamily = FontFamily; menu.FontSize = 13;
-            menu.Items.Add(Item("和杏菜聊天 · GPT", OpenChat));
-            menu.Items.Add(Item("打开小面板", OpenPanel));
-            menu.Items.Add(Item("日语配音与动作", OpenMedia));
-            MenuItem actionsMenu = new MenuItem { Header = "动作" };
-            actionsMenu.Items.Add(Item("思考", delegate { RunMotion("think"); }));
-            actionsMenu.Items.Add(Item("恢复待机", delegate { RunMotion("idle"); }));
-            menu.Items.Add(actionsMenu);
-            menu.Items.Add(Item(settings.Sleeping ? "叫醒杏菜" : "让杏菜小憩", SleepToggle));
-            menu.Items.Add(new Separator());
-            menu.Items.Add(Item("自定义专注时间…", OpenFocusInput));
-            if (focusEnd.HasValue) menu.Items.Add(Item("结束专注", delegate { focusEnd = null; Say("暂停一下也没关系。", 4); }));
-            menu.Items.Add(new Separator());
-            MenuItem autoItem = Item("自主活动", delegate { mediaSettings.AutonomousEnabled = !mediaSettings.AutonomousEnabled; mediaSettings.Save(); autonomous.Interrupt(elapsed.Elapsed.TotalSeconds); }); autoItem.IsCheckable = true; autoItem.IsChecked = mediaSettings.AutonomousEnabled; menu.Items.Add(autoItem);
-            MenuItem top = Item("保持置顶", delegate { settings.OnTop = !settings.OnTop; Topmost = settings.OnTop; settings.Save(); }); top.IsCheckable = true; top.IsChecked = settings.OnTop; menu.Items.Add(top);
-            menu.Items.Add(Item("退出桌宠", delegate { Close(); }));
-            menu.PlacementTarget = this; menu.Placement = PlacementMode.MousePoint; menu.IsOpen = true;
+            chatWindow.SelectCompanionTab(tab);
+            if (!chatWindow.IsVisible) chatWindow.Show();
+            if (chatWindow.WindowState == WindowState.Minimized) chatWindow.WindowState = WindowState.Normal;
+            chatWindow.Activate();
+            if (tab == "chat") chatWindow.FocusInput();
         }
-        private static MenuItem Item(string label, Action action)
-        { MenuItem item = new MenuItem(); item.Header = label; item.Click += delegate { action(); }; return item; }
 
-        private void OpenChat()
+        private void BindPortraitChat(GptChatWindow chat)
         {
-            if (chatWindow != null) { if (!chatWindow.IsVisible) chatWindow.Show(); if (chatWindow.WindowState == WindowState.Minimized) chatWindow.WindowState = WindowState.Normal; chatWindow.Activate(); chatWindow.FocusInput(); return; }
-            chatWindow = new GptChatWindow(this, chatHistory, gptSettings, Say, delegate(bool active) { thinking = active; }, OnAssistantReply, voice.Stop, delegate { return mediaSettings.AutoReadReplies && !settings.Sleeping; }, localMusic.Handle, localMusic.CancelPending, localMusic, null,
-                delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.BeginStream(); },
-                delegate(string sentence) { if (!Program.Smoke && !closing && !hiddenForGame) voice.AppendStream(sentence); },
-                delegate { if (!Program.Smoke && !closing && !hiddenForGame) voice.CompleteStream(); });
-            chatWindow.Closed += delegate { chatWindow = null; thinking = false; };
-            chatWindow.Show(); chatWindow.Activate();
+            chat.UserMessageSubmitted += delegate {
+                if (chatWindow != chat) return;
+                waitingForReplyMotion = chat.HasPendingModelTurn && HasConversationPortrait && mediaSettings.MotionsEnabled;
+                submittedMotionAt = elapsed.Elapsed.TotalSeconds;
+                briefReplyUntil = -1;
+                TryStartUniform2Nod(submittedMotionAt);
+            };
+            chat.ReplyMotionFinished += delegate(bool success) {
+                if (chatWindow != chat) return;
+                if (success && waitingForReplyMotion)
+                    briefReplyUntil = submittedMotionAt + .38;
+                else if (!success)
+                {
+                    if (waitingForReplyMotion) uniform2Director.EndChatNod(elapsed.Elapsed.TotalSeconds);
+                    waitingForReplyMotion = false;
+                    briefReplyUntil = -1;
+                }
+            };
         }
 
-        private void OpenPanel()
-        {
-            if (panel != null) { if (!panel.IsVisible) panel.Show(); if (panel.WindowState == WindowState.Minimized) panel.WindowState = WindowState.Normal; panel.Activate(); return; }
-            panel = new Window();
-            panel.Title = "杏菜 · 小面板"; panel.Width = 390; panel.Height = 730;
-            panel.ResizeMode = ResizeMode.NoResize; panel.WindowStartupLocation = WindowStartupLocation.Manual;
-            panel.ShowInTaskbar = false; panel.Topmost = true; panel.Owner = this;
-            panel.FontFamily = FontFamily; panel.Background = PanelBrush(238, 245, 252);
-            Rect area = SystemParameters.WorkArea;
-            panel.Width = Math.Min(panel.Width, Math.Max(250, area.Width - 24)); panel.Height = Math.Min(panel.Height, area.Height - 24);
-            panel.Left = Math.Max(area.Left, Math.Min(area.Right - panel.Width, Left - 20));
-            panel.Top = Math.Max(area.Top, Math.Min(area.Bottom - panel.Height, Top - 80));
-            StackPanel body = new StackPanel { Margin = new Thickness(16, 15, 16, 18) };
-            panel.Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-
-            Border hero = new Border { Background = PanelBrush(30, 55, 90), CornerRadius = new CornerRadius(16), Height = 145, ClipToBounds = true, Margin = new Thickness(0, 0, 0, 13) };
-            Grid heroGrid = new Grid(); heroGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); heroGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(122) }); hero.Child = heroGrid;
-            StackPanel heroText = new StackPanel { Margin = new Thickness(17, 18, 2, 12) }; heroGrid.Children.Add(heroText);
-            TextBlock tag = GptUi.Text("ANNA YANAMI  /  杏菜", 10, PanelBrush(249, 210, 113)); tag.FontWeight = FontWeights.Bold; heroText.Children.Add(tag);
-            TextBlock heading = GptUi.Text(settings.Nickname + "在这里", 23, Brushes.White); heading.FontWeight = FontWeights.Bold; heading.Margin = new Thickness(0, 8, 0, 5); heroText.Children.Add(heading);
-            TextBlock sub = GptUi.Text("今天也一起加油吧！", 12, PanelBrush(209, 229, 247)); sub.Margin = new Thickness(0, 0, 0, 9); heroText.Children.Add(sub);
-            Border ribbon = new Border { Background = PanelBrush(246, 200, 91), Height = 4, Width = 44, CornerRadius = new CornerRadius(2), HorizontalAlignment = HorizontalAlignment.Left }; heroText.Children.Add(ribbon);
-            Border portrait = new Border { Background = PanelBrush(198, 224, 244), ClipToBounds = true, CornerRadius = new CornerRadius(42, 0, 0, 0), Margin = new Thickness(0, 10, 0, 0) }; Grid.SetColumn(portrait, 1); heroGrid.Children.Add(portrait);
-            BitmapSource portraitSource = motions.Get("idle").Image;
-            int px = portraitSource.PixelWidth * 18 / 100, pw = portraitSource.PixelWidth * 64 / 100, ph = portraitSource.PixelHeight * 58 / 100;
-            CroppedBitmap portraitCrop = new CroppedBitmap(portraitSource, new Int32Rect(px, 0, pw, ph)); portraitCrop.Freeze();
-            Image portraitImage = new Image { Source = portraitCrop, Stretch = Stretch.UniformToFill, VerticalAlignment = VerticalAlignment.Stretch }; RenderOptions.SetBitmapScalingMode(portraitImage, BitmapScalingMode.HighQuality); portrait.Child = portraitImage;
-            body.Children.Add(hero);
-
-            Border quick = PanelCard(); StackPanel quickBody = new StackPanel(); quick.Child = quickBody;
-            quickBody.Children.Add(PanelSection("陪伴时光", "CHAT & VOICE"));
-            Button chat = PanelButton("和杏菜聊天  →", OpenChat, true); chat.Margin = new Thickness(0, 10, 0, 7); quickBody.Children.Add(chat);
-            Button media = PanelButton("日语配音与动作", OpenMedia, false); quickBody.Children.Add(media); body.Children.Add(quick);
-            quickBody.Children.Add(PanelButton("语音输入与麦克风",OpenVoiceInput,false));
-
-            Border timerCard = PanelCard(); timerCard.Margin = new Thickness(0, 10, 0, 0); StackPanel timerBody = new StackPanel(); timerCard.Child = timerBody;
-            timerBody.Children.Add(PanelSection("专注一下", "FOCUS TIME"));
-            focusLabel = Label(FocusText(), 12, Ink); focusLabel.Margin = new Thickness(0, 9, 0, 9); timerBody.Children.Add(focusLabel);
-            Grid timerButtons = new Grid(); timerButtons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); timerButtons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
-            Button custom = PanelButton("设置专注时间", OpenFocusInput, true); custom.Margin = new Thickness(0, 0, 7, 0); timerButtons.Children.Add(custom);
-            Button stop = PanelButton("结束", delegate { focusEnd = null; Say("休息一下吧。", 4); }, false); Grid.SetColumn(stop, 1); timerButtons.Children.Add(stop); timerBody.Children.Add(timerButtons);
-            body.Children.Add(timerCard);
-
-            Border settingsCard = PanelCard(); settingsCard.Margin = new Thickness(0, 10, 0, 0); StackPanel settingsBody = new StackPanel(); settingsCard.Child = settingsBody;
-            settingsBody.Children.Add(PanelSection("桌宠设置", "SETTINGS"));
-            TextBlock nameLabel = Label("称呼", 11, Color.FromRgb(99, 122, 145)); nameLabel.Margin = new Thickness(0, 10, 0, 5); settingsBody.Children.Add(nameLabel);
-            Grid nameRow = new Grid(); nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); nameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) });
-            TextBox name = new TextBox { Text = settings.Nickname, MaxLength = 12, Padding = new Thickness(8, 7, 8, 7), FontSize = 13, BorderBrush = PanelBrush(202, 220, 236), BorderThickness = new Thickness(1), VerticalContentAlignment = VerticalAlignment.Center }; nameRow.Children.Add(name);
-            Button rename = PanelButton("修改", delegate { string n = name.Text.Trim(); if (n.Length == 0) return; settings.Nickname = n; settings.Save(); heading.Text = n + "在这里"; Say("好，那就叫我" + n + "。", 4); }, false); rename.Margin = new Thickness(7, 0, 0, 0); Grid.SetColumn(rename, 1); nameRow.Children.Add(rename); settingsBody.Children.Add(nameRow);
-            TextBlock sizeText = Label("桌宠大小", 11, Color.FromRgb(99, 122, 145)); sizeText.Margin = new Thickness(0, 12, 0, 2); settingsBody.Children.Add(sizeText);
-            Slider slider = new Slider { Minimum = 150, Maximum = 340, Value = settings.Size, Margin = new Thickness(0, 6, 0, 8), TickFrequency = 10, IsSnapToTickEnabled = true }; slider.ValueChanged += delegate { settings.Size = (int)slider.Value; ApplySize(); SavePosition(); }; settingsBody.Children.Add(slider);
-            CheckBox top = new CheckBox { Content = "保持在其他窗口上方", IsChecked = settings.OnTop, FontSize = 12, Foreground = new SolidColorBrush(Ink), Margin = new Thickness(0, 3, 0, 2) }; top.Checked += delegate { Topmost = true; settings.OnTop = true; settings.Save(); }; top.Unchecked += delegate { Topmost = false; settings.OnTop = false; settings.Save(); }; settingsBody.Children.Add(top); body.Children.Add(settingsCard);
-
-            LoginStartup.AddSwitch(settingsBody);
-            Grid actions = new Grid { Margin = new Thickness(0, 12, 0, 0) }; actions.ColumnDefinitions.Add(new ColumnDefinition()); actions.ColumnDefinitions.Add(new ColumnDefinition());
-            Button sleep = null; sleep = PanelButton(settings.Sleeping ? "叫醒杏菜" : "小憩一下", delegate { SleepToggle(); sleep.Content = settings.Sleeping ? "叫醒杏菜" : "小憩一下"; }, false); sleep.Margin = new Thickness(0, 0, 5, 0); actions.Children.Add(sleep);
-            Button exit = PanelButton("退出桌宠", delegate { Close(); }, false); exit.Margin = new Thickness(5, 0, 0, 0); Grid.SetColumn(exit, 1); actions.Children.Add(exit); body.Children.Add(actions);
-            TextBlock help = Label("单击互动  ·  拖动移动  ·  双击聊天", 10, Color.FromRgb(118, 139, 159)); help.HorizontalAlignment = HorizontalAlignment.Center; help.Margin = new Thickness(0, 13, 0, 0); body.Children.Add(help);
-            panel.Closed += delegate { panel = null; focusLabel = null; };
-            panel.Show(); panel.Activate();
-        }
+        private void OpenPanel() { ShowCompanionTab("settings"); }
 
         private void WritePanelPreview()
         {
             try
             {
-                Window selected = Program.ChatPreview ? (Window)chatWindow : Program.VoicePreview ? (Window)mediaWindow : panel;
+                Window selected = Program.RailPreview ? (Window)this : Program.VoicePreview ? (Window)mediaWindow : chatWindow;
                 if (selected == null || !selected.IsVisible) throw new InvalidOperationException("Panel preview unavailable.");
                 if (Program.NarrowPreview) { selected.MinWidth = 0; selected.Width = Math.Min(450, SystemParameters.WorkArea.Width - 20); }
                 selected.UpdateLayout();
@@ -1141,6 +1236,22 @@ namespace AnnaDesktopPet
                 if (width <= 0 || height <= 0) throw new InvalidOperationException("Panel preview is empty.");
                 RenderTargetBitmap render = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
                 render.Render(selected);
+                if (Program.PreviewWithPet && selected != this)
+                {
+                    UpdateLayout();
+                    var pet = new RenderTargetBitmap((int)Math.Ceiling(ActualWidth), (int)Math.Ceiling(ActualHeight), 96, 96, PixelFormats.Pbgra32);
+                    pet.Render(this);
+                    Rect frame = new Rect(selected.Left, selected.Top, width, height);
+                    frame.Union(new Rect(Left, Top, pet.PixelWidth, pet.PixelHeight));
+                    var pair = new DrawingVisual();
+                    using (var painter = pair.RenderOpen())
+                    {
+                        painter.DrawImage(render, new Rect(selected.Left - frame.Left, selected.Top - frame.Top, width, height));
+                        painter.DrawImage(pet, new Rect(Left - frame.Left, Top - frame.Top, pet.PixelWidth, pet.PixelHeight));
+                    }
+                    render = new RenderTargetBitmap((int)Math.Ceiling(frame.Width), (int)Math.Ceiling(frame.Height), 96, 96, PixelFormats.Pbgra32);
+                    render.Render(pair);
+                }
                 PngBitmapEncoder encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(render));
                 using (FileStream output = File.Create(Program.SmokePath)) encoder.Save(output);
                 Application.Current.Shutdown(0);
@@ -1148,25 +1259,6 @@ namespace AnnaDesktopPet
             catch (Exception error) { Program.Log("Panel preview failed: " + error.Message); Application.Current.Shutdown(1); }
         }
 
-        private static SolidColorBrush PanelBrush(byte r, byte g, byte b) { return new SolidColorBrush(Color.FromRgb(r, g, b)); }
-        private static Border PanelCard() { return new Border { Background = Brushes.White, BorderBrush = PanelBrush(218, 231, 242), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Padding = new Thickness(14, 12, 14, 13) }; }
-        private static Grid PanelSection(string title, string caption)
-        {
-            Grid row = new Grid(); row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            TextBlock text = GptUi.Text(title, 14, PanelBrush(32, 62, 93)); text.FontWeight = FontWeights.Bold; row.Children.Add(text);
-            TextBlock small = GptUi.Text(caption, 9, PanelBrush(126, 155, 182)); small.FontWeight = FontWeights.SemiBold; small.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(small, 1); row.Children.Add(small); return row;
-        }
-        private static Button PanelButton(string label, Action action, bool primary)
-        {
-            Button button = Button(label, action); button.FontSize = 12; button.FontWeight = FontWeights.SemiBold; button.Padding = new Thickness(11, 8, 11, 8);
-            button.Background = primary ? PanelBrush(50, 103, 151) : PanelBrush(245, 249, 253); button.Foreground = primary ? Brushes.White : PanelBrush(42, 79, 113); button.BorderBrush = primary ? PanelBrush(50, 103, 151) : PanelBrush(207, 224, 238);
-            ControlTemplate template = new ControlTemplate(typeof(Button));
-            FrameworkElementFactory border = new FrameworkElementFactory(typeof(Border)); border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8)); border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(System.Windows.Controls.Button.BackgroundProperty)); border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(System.Windows.Controls.Button.BorderBrushProperty)); border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(System.Windows.Controls.Button.BorderThicknessProperty)); border.SetValue(Border.PaddingProperty, new TemplateBindingExtension(System.Windows.Controls.Button.PaddingProperty));
-            FrameworkElementFactory content = new FrameworkElementFactory(typeof(ContentPresenter)); content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center); content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center); border.AppendChild(content); template.VisualTree = border;
-            Trigger hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true }; hover.Setters.Add(new Setter(Border.OpacityProperty, 0.84)); template.Triggers.Add(hover);
-            Trigger focus = new Trigger { Property = UIElement.IsKeyboardFocusedProperty, Value = true }; focus.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(2))); template.Triggers.Add(focus);
-            button.Template = template; return button;
-        }
 
         private static TextBlock Label(string text, double size, Color color)
         { TextBlock b = new TextBlock(); b.Text = text; b.FontSize = size; b.Foreground = new SolidColorBrush(color); b.TextWrapping = TextWrapping.Wrap; return b; }
@@ -1179,5 +1271,6 @@ namespace AnnaDesktopPet
         [DllImport("user32.dll", EntryPoint = "GetWindowLong")] private static extern int GetWindowLong(IntPtr hwnd, int index);
         [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
         [DllImport("user32.dll")] private static extern uint GetDoubleClickTime();
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out System.Drawing.Point point);
     }
 }

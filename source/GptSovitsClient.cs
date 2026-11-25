@@ -49,6 +49,8 @@ namespace AnnaDesktopPet
 
         internal static string CreateRequest(string text, string referenceAudio, string referenceText, int rate)
         {
+            VoicePerformance performance = VoicePerformance.Resolve(text, referenceAudio, referenceText, rate);
+            text = performance.Text; referenceAudio = performance.Audio; referenceText = performance.Transcript; rate = performance.Rate;
             Dictionary<string, object> body = new Dictionary<string, object>();
             body["text"] = text; body["text_lang"] = "ja";
             body["ref_audio_path"] = referenceAudio; body["prompt_text"] = referenceText;

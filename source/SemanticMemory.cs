@@ -27,13 +27,18 @@ namespace AnnaDesktopPet {
                 var candidate=new SemanticMemory {Key=((string)fields["key"]).Trim(),Text=((string)fields["text"]).Trim(),
                     Kind=(string)fields["kind"],Certainty=(string)fields["certainty"],Evidence=((string)fields["evidence"]).Trim(),Replaces=((string)fields["replaces"]).Trim()};
                 if(!Regex.IsMatch(candidate.Key,@"^[\p{L}\p{N}:_. -]{1,80}$")||!keys.Add(candidate.Key)||candidate.Text.Length<2||candidate.Text.Length>200||candidate.Evidence.Length<2||candidate.Evidence.Length>300||candidate.Replaces.Length>220||
-                    Array.IndexOf(new[]{"preference","event","communication"},candidate.Kind)<0||Array.IndexOf(new[]{"explicit","tentative"},candidate.Certainty)<0)
+                    Array.IndexOf(new[]{"preference","event","communication","fact"},candidate.Kind)<0||Array.IndexOf(new[]{"explicit","tentative"},candidate.Certainty)<0)
                     throw new FormatException("Invalid memory values.");
                 if(IsSensitive(candidate.Key+" "+candidate.Text+" "+candidate.Evidence)||IsUnsafeInference(candidate))continue;
                 bool grounded=false;
-                if(evidence!=null)foreach(ChatMessage message in evidence) {
+                if(evidence!=null)for(int turn=0;turn<evidence.Count;turn++) {
+                    ChatMessage message=evidence[turn];
                     if(message==null||message.Role!="user"||String.IsNullOrEmpty(message.Content)||message.Content.IndexOf(candidate.Evidence,StringComparison.Ordinal)<0)continue;
-                    if(IsSensitive(message.Content)||IsFictionalEvidence(message.Content)||Regex.IsMatch(message.Content,@"(?:他说|她说|角色说|引用|假设|假如|如果我|帮我写|替我写|翻译|小说里|故事里|举例|示例|台词)"))continue;
+                    if(!CanUseUserStatement(message.Content)||!IsDeclarativeEvidence(message.Content,candidate.Evidence)||
+                        LocalMemoryFact.InRoleplay(evidence,message.Content,turn))continue;
+                    // Judging only a short quote like "Ado" loses the fact that
+                    // the user was simply requesting a single track.
+                    if(IsSingleMusicRequestEvidence(message.Content,candidate.Evidence))continue;
                     grounded=true;candidate.EvidenceUtc=message.CreatedUtc;
                 }
                 if(grounded) {
@@ -50,6 +55,27 @@ namespace AnnaDesktopPet {
                 }
             }
             return result;
+        }
+        internal static bool CanUseUserStatement(string text) {
+            if(String.IsNullOrWhiteSpace(text)||IsSensitive(text)||IsFictionalEvidence(text))return false;
+            return !Regex.IsMatch(text,@"(?:他说|她说|角色说|引用|假设|假如|如果我|帮我写|替我写|翻译|小说里|故事里|举例|示例|台词|[“”「」]|(?:别|不(?:要|用|许|想让你|希望你)|请勿)(?:再|长期|自动|永久|在本地|一直|帮我|把.{0,20}){0,3}(?:记(?:住|录|下)?|存(?:储|下)?|保[存留]|放进记忆)|忘(?:掉|记)(?:我|这|刚才)|(?:do not|don't) (?:save|remember|store))",RegexOptions.IgnoreCase);
+        }
+        internal static bool Question(string clause) {
+            return Regex.IsMatch(clause,@"[？?]|吗[呢啊]?\s*[。！!]?\s*$|是不是|会不会|喜不喜欢|我喜欢(?:什么|谁|哪)|你还记得");
+        }
+        static bool IsDeclarativeEvidence(string message,string quote) {
+            if(!Question(message))return true;
+            foreach(Match clause in Regex.Matches(message,@"[^，,。！!；;\r\n？?]+[？?]?"))
+                if(!Question(clause.Value)&&clause.Value.Contains(quote.TrimEnd('。','，',',','!','！','；',';')))return true;
+            return false;
+        }
+        static bool IsSingleMusicRequestEvidence(string message,string quote) {
+            if(HasExplicitPreference(quote)||Regex.IsMatch(quote,@"(?:以后|今后|每次|平时|总是|经常|每天|总会|always|usually)",RegexOptions.IgnoreCase))return false;
+            foreach(var clause in Regex.Split(message,@"[，,。！？!?；;\r\n]+")) {
+                if(!clause.Contains(quote)&&!quote.Contains(clause))continue;
+                if(Regex.IsMatch(clause.Trim(), @"(?:点(?:一首|一曲|播|歌|个.{0,24}(?:歌|音乐|曲))|(?:来|听)(?:一首|首|一曲)|(?:播(?:放)?|放|听听|听一下)(?:一首|个|下|一下|点|首)?[^。！？]{0,35}(?:歌|音乐|曲)|(?:帮我|给我|想听|播放).{0,30}(?:播|放|听|点)|^(?:请)?(?:我想听|想听|播放|放一首)|^(?:(?:please|can you|could you)\s+)?(?:play|queue)\s+\w+)",RegexOptions.IgnoreCase))return true;
+            }
+            return false;
         }
         internal static bool IsFictionalEvidence(string text) {
             // Conservative local guard for explicit story/dream markers, even if the model

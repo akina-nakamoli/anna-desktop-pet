@@ -91,6 +91,9 @@ namespace AnnaDesktopPet
 
         private static void OutputContract(Dictionary<string, object> body, bool japanese, bool streaming)
         {
+            if (japanese)
+                Check(SystemText(body).Contains("日语口语节奏（仅用于 speech_ja）"),
+                    "Bilingual requests include delivery guidance scoped to the spoken field");
             Check(body.ContainsKey("stream") ? (bool)body["stream"] == streaming : !streaming, "Requested streaming mode survives persona injection");
 #if DEEPSEEK
             Check(body.ContainsKey("messages") && !body.ContainsKey("instructions"), "DeepSeek keeps its messages transport contract");

@@ -1,19 +1,21 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 
 namespace AnnaDesktopPet
 {
     internal sealed partial class GptChatWindow : Window
     {
+        internal event Action UserMessageSubmitted;
+        internal event Action<bool> ReplyMotionFinished;
+        internal bool HasPendingModelTurn { get { return activeReply != null && OwnsTurn(activeReply); } }
         private readonly IList<ChatMessage> history;
         private readonly GptSettings settings;
         private readonly Action<string, double> preview;
@@ -25,17 +27,25 @@ namespace AnnaDesktopPet
         private readonly Action cancelMusic;
         private readonly GptClient modelClient;
         private readonly MusicConversation musicConversation;
-        private readonly StackPanel messages;
-        private readonly ScrollViewer conversation;
-        private readonly TextBox input;
-        private readonly TextBlock status;
-        private readonly Button send, stop, fresh, configure;
-        private readonly ProgressBar progress;
+        private StackPanel messages;
+        private ScrollViewer conversation;
+        private TextBox input;
+        private TextBlock status;
+        private Button send, stop, fresh;
+        private ProgressBar progress;
         private CancellationTokenSource request;
         private CancellationTokenSource maintenanceRequest;
         private int visibleMessageLimit = 80;
         private bool busy, closing;
         private bool voiceInput;
+        internal string CallAssistantText { get; private set; }
+        internal string CallStatus { get { return String.IsNullOrEmpty(status.Text) ? connectionText.Text : status.Text; } }
+        internal Task SubmitCallAsync(string text)
+        {
+            if (!CanAcceptVoice) throw new InvalidOperationException("聊天正在忙碌，或输入框里还有草稿。");
+            voiceInput = true;
+            return SubmitAsync(text);
+        }
         internal bool CanAcceptVoice {get{return !busy && !closing && String.IsNullOrWhiteSpace(input.Text);}}
         internal void ReviewVoice(string text){if(!CanAcceptVoice)return;input.Text=text;SetStatus("识别结果不确定，请修改后点击发送，或清空输入框重新说。",true);FocusInput();}
         internal void SendVoice(string text){if(!CanAcceptVoice)return;input.Text=text;voiceInput=true;Send();}
@@ -56,59 +66,7 @@ namespace AnnaDesktopPet
             Title = "和杏菜聊天 · GPT";
 #endif
             Title += " · v" + Assembly.GetExecutingAssembly().GetName().Version.ToString(2);
-            Rect workArea = SystemParameters.WorkArea;
-            Width = Math.Min(680, Math.Max(250, workArea.Width - 30)); Height = Math.Min(750, Math.Max(300, workArea.Height - 30));
-            MinWidth = Math.Min(520, Width); MinHeight = Math.Min(580, Height);
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            ShowInTaskbar = true;
-            FontFamily = new FontFamily("Microsoft YaHei UI");
-            Background = Appearance.Night ? GptUi.Brush(20,29,46) : GptUi.Brush(231, 241, 250);
-            Grid backdrop = new Grid(); Content = backdrop;
-            BitmapSource art = LoadChatBackground();
-            if (art != null)
-            {
-                Image artwork = new Image { Source = art, Stretch = Stretch.UniformToFill, Opacity = Appearance.Night ? 0.25 : 0.82, IsHitTestVisible = false };
-                RenderOptions.SetBitmapScalingMode(artwork, BitmapScalingMode.HighQuality); backdrop.Children.Add(artwork);
-                backdrop.Children.Add(new Border { Background = Appearance.Night ? new SolidColorBrush(Color.FromArgb(150,20,29,46)) : new SolidColorBrush(Color.FromArgb(88, 234, 244, 252)), IsHitTestVisible = false });
-            }
-            Grid root = new Grid(); root.Margin = new Thickness(22, 19, 22, 17); backdrop.Children.Add(root);
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            Grid header = new Grid();
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            StackPanel titles = new StackPanel();
-            TextBlock tag = GptUi.Text("ANNA YANAMI  /  杏菜", 10, GptUi.Brush(250, 207, 107)); tag.FontWeight = FontWeights.Bold; titles.Children.Add(tag);
-            TextBlock title = GptUi.Text("和杏菜聊聊", 23, Brushes.White); title.FontWeight = FontWeights.Bold; title.Margin = new Thickness(0, 5, 0, 0); titles.Children.Add(title);
-            TextBlock subtitle = GptUi.Text("中文聊天 · 可选日语配音", 12, GptUi.Brush(203, 226, 245)); subtitle.Margin = new Thickness(0, 5, 0, 0); titles.Children.Add(subtitle); header.Children.Add(titles);
-            StackPanel tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            fresh = ChatButton("新对话", NewConversation, false); tools.Children.Add(fresh);
-            Button memories = ChatButton("记忆", OpenMemory, false); memories.Margin = new Thickness(8, 0, 0, 0); tools.Children.Add(memories);
-            configure = ChatButton("设置", OpenSettings, false); configure.Margin = new Thickness(8, 0, 0, 0); tools.Children.Add(configure);
-            Grid.SetColumn(tools, 1); header.Children.Add(tools);
-            Border headerCard = new Border { Background = GptUi.Brush(30, 55, 90), CornerRadius = new CornerRadius(15), Padding = new Thickness(17, 13, 17, 14), Margin = new Thickness(0, 0, 0, 12), Child = header }; root.Children.Add(headerCard);
-
-            progress = new ProgressBar { IsIndeterminate = true, Height = 3, Visibility = Visibility.Collapsed, Foreground = GptUi.Brush(73, 141, 190), BorderThickness = new Thickness(0), Margin = new Thickness(0, 0, 0, 5) };
-            Grid.SetRow(progress, 1); root.Children.Add(progress);
-            messages = new StackPanel { Margin = new Thickness(0, 12, 10, 12) };
-            conversation = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = messages, CanContentScroll = false, PanningMode = PanningMode.VerticalOnly };
-            Grid.SetRow(conversation, 2); root.Children.Add(conversation);
-
-            Border inputCard = new Border { Background = CardBrush(245), BorderBrush = GptUi.Brush(210, 225, 237), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Padding = new Thickness(12, 10, 12, 10), Margin = new Thickness(0, 10, 0, 0) };
-            Grid inputGrid = new Grid(); inputGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); inputGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); inputCard.Child = inputGrid;
-            input = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontSize = 14, MinHeight = 68, MaxHeight = 150, MaxLength = 4000, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Foreground = GptUi.Ink, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Padding = new Thickness(2), ToolTip = "输入想说的话，Ctrl + Enter 发送" };
-            input.PreviewKeyDown += delegate(object sender, KeyEventArgs e) { if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) != 0) { e.Handled = true; Send(); } }; inputGrid.Children.Add(input);
-            Grid inputTools = new Grid { Margin = new Thickness(0, 10, 0, 0) }; inputTools.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); inputTools.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            TextBlock hint = GptUi.Text("Ctrl + Enter 发送 · Enter 换行", 11, GptUi.Muted); hint.VerticalAlignment = VerticalAlignment.Center; inputTools.Children.Add(hint);
-            StackPanel sendTools = new StackPanel { Orientation = Orientation.Horizontal };
-            stop = ChatButton("停止", Stop, false); stop.ToolTip = "停止当前请求和朗读"; sendTools.Children.Add(stop);
-            send = ChatButton("发送", Send, true); send.MinWidth = 84; send.Margin = new Thickness(8, 0, 0, 0); sendTools.Children.Add(send); Grid.SetColumn(sendTools, 1); inputTools.Children.Add(sendTools);
-            Grid.SetRow(inputTools, 1); inputGrid.Children.Add(inputTools); Grid.SetRow(inputCard, 3); root.Children.Add(inputCard);
-            status = GptUi.Text("", 11, GptUi.Ink); status.LineHeight = 18; status.Margin = new Thickness(0); Border statusCard = new Border { Background = CardBrush(235), CornerRadius = new CornerRadius(7), Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 6, 0, 0), Child = status }; Grid.SetRow(statusCard, 4); root.Children.Add(statusCard);
+            BuildCompanionPanel(contextualMusic);
             Closing += delegate
             {
                 closing = true;
@@ -120,55 +78,136 @@ namespace AnnaDesktopPet
                 if (request != null) { request.Cancel(); preview("这次先停在这里，想聊时再发给我。", 4); }
                 thinking(false);
             };
-            Loaded += delegate { input.Focus(); };
+            Loaded += delegate { if (SelectedCompanionTab == "chat") FocusInput(); StartMaintenance(); };
+            revealTimer.Tick += RevealTick; Closed += delegate { revealTimer.Stop(); };
             RebuildMessages(); RefreshReadyStatus();
         }
 
-        internal void FocusInput() { if (input.IsEnabled) { input.Focus(); Keyboard.Focus(input); } }
+        internal void FocusInput() { if (SelectedCompanionTab == "chat" && input.IsEnabled) { input.Focus(); Keyboard.Focus(input); } }
 
         private void RebuildMessages(bool scrollToEnd = true)
         {
             messages.Children.Clear();
-            if (history.Count == 0)
+            if (history.Count == 0 && activeReply == null)
             {
-                Border welcome = new Border { Background = CardBrush(232), BorderBrush = GptUi.Brush(225, 234, 242), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16), Padding = new Thickness(20), Margin = new Thickness(0, 8, 0, 18), MaxWidth = 420, HorizontalAlignment = HorizontalAlignment.Left };
-                StackPanel body = new StackPanel(); welcome.Child = body;
-                TextBlock greeting = GptUi.Text("今天想聊什么？", 20, GptUi.Ink); greeting.FontWeight = FontWeights.SemiBold; body.Children.Add(greeting);
-                TextBlock detail = GptUi.Text("随便聊聊，整理一个想法，或者一起想想晚饭吃什么。", 13, GptUi.Muted); detail.LineHeight = 23; detail.Margin = new Thickness(0, 10, 0, 12); body.Children.Add(detail);
-                if (string.IsNullOrWhiteSpace(settings.ApiKey))
+                if (Program.ChatPreview)
                 {
-                    TextBlock setup = GptUi.Text("还没有配置 API Key。你可以先打开右上角「设置」，准备好后再填写。", 13, GptUi.Blue); setup.LineHeight = 23; body.Children.Add(setup);
+                    AddBubble("user", "杏菜，陪我听首歌吧。");
+                    AddBubble("assistant", "好呀！今天想听哪首？告诉我歌名，或者点「一起听」，我们接着听你正在放的那首。");
                 }
-                else body.Children.Add(GptUi.Text("聊天会加密保存在本机，重启后可接着聊。较早对话会整理成摘要。", 12, GptUi.Muted));
-                messages.Children.Add(welcome);
+                else messages.Children.Add(BuildWelcomeMessage());
             }
             if (history.Count > visibleMessageLimit)
             {
                 Button earlier = ChatButton("查看更早的聊天（本机已保存）", delegate { visibleMessageLimit += 80; RebuildMessages(false); conversation.ScrollToTop(); }, false);
                 earlier.Margin = new Thickness(0, 0, 0, 12); messages.Children.Add(earlier);
             }
-            for (int i = Math.Max(0, history.Count - visibleMessageLimit); i < history.Count; i++) AddBubble(history[i].Role, history[i].Content);
+            for (int i = Math.Max(0, history.Count - visibleMessageLimit); i < history.Count; i++)
+            {
+                var item = history[i];
+                if (activeReply != null && item == activeReply.DisplayedAnswer)
+                {
+                    var old = activeReply.Bubble;
+                    string zh = old == null ? "" : old.Text;
+                    string ja = old == null ? "" : ((TextBox)old.Tag).Text;
+                    activeReply.Bubble = AddBubble(item.Role, zh, ja, item.JapaneseText);
+                    Reveal(activeReply, item.Content, item.JapaneseText);
+                }
+                else AddBubble(item.Role, item.Content, item.JapaneseText, item.JapaneseText);
+            }
             if (activeReply != null && !activeReply.Committed)
             {
                 AddBubble("user", activeReply.UserText);
-                activeReply.Bubble = String.IsNullOrEmpty(activeReply.PartialText) ? null : AddBubble("assistant", activeReply.PartialText);
+                if (activeReply.Bubble != null) activeReply.Bubble = AddBubble("assistant", activeReply.Bubble.Text, ((TextBox)activeReply.Bubble.Tag).Text);
             }
             if (scrollToEnd) ScrollToEnd();
         }
 
-        private TextBox AddBubble(string role, string text)
+        private static readonly Brush OutgoingBubble = GptUi.Brush(65, 105, 132);
+        private static readonly Brush IncomingBubble = PanelPalette.Incoming;
+
+        private TextBox AddBubble(string role, string text, string japanese = null, string replayText = null)
         {
             bool user = role == "user" || role == "local_user";
-            StackPanel block = new StackPanel { HorizontalAlignment = user ? HorizontalAlignment.Right : HorizontalAlignment.Left, MaxWidth = 490, Margin = new Thickness(user ? 40 : 0, 0, user ? 0 : 40, 17) };
-#if DEEPSEEK
-            const string modelLabel = "杏菜 · DeepSeek";
-#else
-            const string modelLabel = "杏菜 · GPT";
-#endif
-            TextBlock label = GptUi.Text(user ? "你" : (role == "local_assistant" ? "杏菜 · 操作结果" : modelLabel), 11, GptUi.Ink); label.HorizontalAlignment = user ? HorizontalAlignment.Right : HorizontalAlignment.Left; label.Margin = new Thickness(4, 0, 4, 5); label.Background = CardBrush(220); block.Children.Add(label);
-            Border card = new Border { Background = user ? GptUi.Blue : CardBrush(245), BorderBrush = user ? GptUi.Blue : GptUi.Brush(223, 234, 242), BorderThickness = new Thickness(1), CornerRadius = user ? new CornerRadius(15, 4, 15, 15) : new CornerRadius(4, 15, 15, 15), Padding = new Thickness(13, 10, 13, 10) };
-            TextBox copyable = new TextBox { Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Foreground = user ? Brushes.White : GptUi.Ink, FontSize = 14, Padding = new Thickness(0), IsReadOnlyCaretVisible = false, Focusable = true };
-            card.Child = copyable; block.Children.Add(card); messages.Children.Add(block);
+            bool localResult = role == "local_assistant";
+            string speaker = user ? "你" : companionName.Text;
+            var row = new Grid {
+                HorizontalAlignment = user ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+                MaxWidth = 485, Margin = new Thickness(user ? 50 : 6, 2, user ? 7 : 36, 13)
+            };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            if (!user)
+            {
+                var avatar = new Border {
+                    Width = 30, Height = 30, Margin = new Thickness(0, 1, 7, 0), VerticalAlignment = VerticalAlignment.Top,
+                    CornerRadius = new CornerRadius(15), Background = Brushes.White, ToolTip = speaker
+                };
+                if (companionPortrait != null)
+                {
+                    avatar.Child = new Border { CornerRadius = new CornerRadius(15), Background = companionPortrait };
+                    RenderOptions.SetBitmapScalingMode(avatar, BitmapScalingMode.HighQuality);
+                }
+                else
+                    avatar.Child = new TextBlock { Text = speaker, FontSize = 10, Foreground = PanelText, TextTrimming = TextTrimming.CharacterEllipsis,
+                        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                row.Children.Add(avatar);
+            }
+            var copyable = new TextBox {
+                Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                BorderThickness = new Thickness(0), Background = Brushes.Transparent, Foreground = user ? Brushes.White : PanelText,
+                FontSize = 14, Padding = new Thickness(0), IsReadOnlyCaretVisible = false
+            };
+            AutomationProperties.SetName(copyable, localResult ? speaker + " · 操作结果" : speaker);
+            FrameworkElement body = copyable;
+            if (role == "assistant")
+            {
+                var content = new StackPanel();
+                content.Children.Add(copyable);
+                var translation = new TextBox { IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                    BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = PanelQuiet,
+                    Margin = new Thickness(0, 6, 0, 0), Padding = new Thickness(0, 5, 0, 0),
+                    Background = Brushes.Transparent, Foreground = PanelText, FontSize = 13,
+                    Text = japanese ?? "", Visibility = String.IsNullOrWhiteSpace(japanese) ? Visibility.Collapsed : Visibility.Visible };
+                AutomationProperties.SetName(translation, "日语译文");
+                copyable.Tag = translation;
+                content.Children.Add(translation);
+                body = content;
+            }
+            if (localResult)
+            {
+                var content = new StackPanel();
+                var label = GptUi.Text("操作结果", 11, PanelQuiet);
+                label.FontWeight = FontWeights.SemiBold;
+                label.Margin = new Thickness(0, 0, 0, 3);
+                content.Children.Add(label);
+                content.Children.Add(copyable);
+                body = content;
+            }
+            var bubble = new Border {
+                Background = user ? OutgoingBubble : IncomingBubble,
+                CornerRadius = user ? new CornerRadius(16, 16, 5, 16) : new CornerRadius(5, 16, 16, 16),
+                Padding = new Thickness(13, 8, 13, 8), Child = body
+            };
+            Grid.SetColumn(bubble, 1);
+            row.Children.Add(bubble);
+            if (role == "assistant" && !String.IsNullOrWhiteSpace(replayText))
+            {
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var replay = new Button { Content = "\uE767", FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                    FontSize = 14, Width = 27, Height = 27, ToolTip = "重播这条日语配音",
+                    VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(4, 0, 0, 2),
+                    BorderThickness = new Thickness(0), Background = Brushes.Transparent, Foreground = PanelText };
+                AutomationProperties.SetName(replay, "重播这条日语配音");
+                replay.Click += delegate {
+                    if (HasPendingModelTurn) { SetStatus("请等当前回复完成后再重播。", false); return; }
+                    var pet = Owner as PetWindow;
+                    if (pet != null) pet.SpeakVoiceReply(replayText);
+                };
+                Grid.SetColumn(replay, 2);
+                row.Children.Add(replay);
+            }
+            messages.Children.Add(row);
             return copyable;
         }
 
@@ -177,12 +216,18 @@ namespace AnnaDesktopPet
         {
             var saved = history as ConversationHistory;
             string notice = saved == null ? "" : saved.StorageNotice;
-            SetStatus((string.IsNullOrWhiteSpace(settings.ApiKey) ? "等待配置 API Key · 尚未连接模型 · v1.41" : "准备好了 · " + settings.Model + " · v1.41 · 人物设定 V4.0 · 流式回复 · 侧键可打断") + (String.IsNullOrEmpty(notice) ? "" : "\n" + notice), !String.IsNullOrEmpty(notice));
+            bool configured = !String.IsNullOrWhiteSpace(settings.ApiKey);
+            connectionText.Text = configured ? "当前模型 · " + settings.Model : "模型待配置";
+            connectionDot.Background = configured ? GptUi.Brush(54, 142, 130) : GptUi.Brush(113, 139, 158);
+            SetStatus(notice, !String.IsNullOrEmpty(notice));
         }
-        private void SetStatus(string text, bool error) { status.Text = text; status.Foreground = error ? GptUi.Brush(167, 66, 62) : GptUi.Muted; }
+        private void SetStatus(string text, bool error) {
+            status.Text = text ?? ""; status.Visibility = String.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+            status.Foreground = error ? GptUi.Brush(155, 58, 54) : PanelQuiet;
+        }
         private void SetBusy(bool active)
         {
-            busy = active; input.IsEnabled = !active; send.IsEnabled = !active; stop.IsEnabled = true; fresh.IsEnabled = !active; configure.IsEnabled = !active;
+            busy = active; input.IsEnabled = !active; send.IsEnabled = !active; stop.IsEnabled = true; fresh.IsEnabled = !active;
             progress.Visibility = active ? Visibility.Visible : Visibility.Collapsed; thinking(active);
         }
 
@@ -198,21 +243,40 @@ namespace AnnaDesktopPet
         private async Task SendCoreAsync()
         {
             if (busy || closing) return;
-            CancelMaintenance();
             StopSpeech();
             string userText = input.Text.Trim();
             DateTime userSentUtc = DateTime.UtcNow;
             bool fromVoice=voiceInput;voiceInput=false;
+            CallAssistantText = "";
             if (userText.Length == 0) { SetStatus("先写一点想说的话吧。", false); input.Focus(); return; }
             // Keep explicit local utilities available without a model. Resolve conversational music below.
             string localMemory = PetMemory.Handle(userText);
             if (localMemory != null)
             {
+                CancelMaintenance();
                 history.Add(new ChatMessage("local_user", userText) { CreatedUtc = userSentUtc }); history.Add(new ChatMessage("local_assistant", localMemory));
                 var saved = history as ConversationHistory;
-                if (saved != null && localMemory.StartsWith("记忆已删除", StringComparison.Ordinal)) saved.MemoryProcessedCount = history.Count;
+                if (saved != null && localMemory.StartsWith("记忆已删除", StringComparison.Ordinal))
+                {
+                    saved.MemoryProcessedCount = history.Count;
+                    saved.DiscardPendingMemory();
+                }
                 string storage = PersistHistory();
-                input.Clear(); RebuildMessages(); SetStatus("本机记忆操作已完成" + storage, storage.Length > 0); return;
+                input.Clear(); RebuildMessages(); SetStatus("本机记忆操作已完成" + storage, storage.Length > 0);
+                StartMaintenance(); return;
+            }
+            string remembered = PetMemory.Observe(userText, userSentUtc, history);
+            if (remembered != null && String.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                const string reply = "嗯，我记住了。";
+                history.Add(new ChatMessage("user", userText) { CreatedUtc = userSentUtc });
+                history.Add(new ChatMessage("local_assistant", reply));
+                if (UserMessageSubmitted != null) UserMessageSubmitted();
+                CallAssistantText = reply;
+                string storage = PersistHistory();
+                input.Clear(); RebuildMessages();
+                SetStatus("记忆已加密保存在本机。配置聊天模型后可以继续对话。" + storage, storage.Length > 0);
+                return;
             }
             bool localUtility = System.Text.RegularExpressions.Regex.IsMatch(userText, @"^(?:本地(?:播放|放|听)|(?:播放|放|听)本地|移除收藏第?\d+首?$|播放收藏第?\d+首?$|(?:打开)?(?:音乐面板|正在播放面板)$)");
             if (musicCommand != null && (String.IsNullOrWhiteSpace(settings.ApiKey) || musicConversation == null || localUtility))
@@ -236,21 +300,22 @@ namespace AnnaDesktopPet
                     preview(musicResult.Length > 35 ? musicResult.Substring(0, 35) + "…" : musicResult, 8); input.Focus(); return;
                 }
             }
-            if (string.IsNullOrWhiteSpace(settings.ApiKey)) { SetStatus("还没有 API Key。请先打开右上角「设置」填写；本次没有发送任何请求。", true); return; }
+            if (string.IsNullOrWhiteSpace(settings.ApiKey)) { SetStatus("还没有 API Key。请在「设置」的「模型连接」中填写。本次没有发送任何请求。", true); return; }
             bool japaneseSpeech = fromVoice || wantsJapaneseSpeech != null && wantsJapaneseSpeech();
             CancellationTokenSource activeRequest = new CancellationTokenSource(); request = activeRequest;
-            ReplyTurn turn = new ReplyTurn { Cancellation = activeRequest, UserText = userText, SentUtc = userSentUtc }; activeReply = turn;
+            ReplyTurn turn = new ReplyTurn { SpeakJapanese = japaneseSpeech, Cancellation = activeRequest, UserText = userText, SentUtc = userSentUtc }; activeReply = turn;
             SetBusy(true); SetStatus("杏菜正在思考……按住鼠标后退侧键可以打断并说话。", false);
             RebuildMessages(); ScrollToEnd();
             preview("我正在想你的问题……", 180);
             try
             {
+                if (UserMessageSubmitted != null) UserMessageSubmitted();
                 GptReply reply = musicConversation == null
                     ? await modelClient.SendReplyAsync(settings, history, userText, japaneseSpeech, activeRequest.Token, delegate(GptStreamUpdate update) { ApplyStream(turn, update); })
                     : await musicConversation.SendAsync(settings, history, userText, japaneseSpeech, activeRequest.Token,
                         delegate(string message) { if (OwnsTurn(turn)) SetStatus(message, false); },
                         delegate(GptStreamUpdate update) { ApplyStream(turn, update); }, delegate(string receipt) { RecordToolReceipt(turn, receipt); });
-                if (!OwnsTurn(turn)) return;
+                if (activeReply != turn || closing) return;
                 bool hasToolResult = reply != null && !String.IsNullOrWhiteSpace(reply.ToolResultText);
                 if (!hasToolResult) activeRequest.Token.ThrowIfCancellationRequested();
                 string result = reply == null ? null : reply.DisplayText;
@@ -258,14 +323,41 @@ namespace AnnaDesktopPet
                 turn.Committed = true;
                 history.Add(new ChatMessage("user", userText) { CreatedUtc = userSentUtc });
                 if (hasToolResult) history.Add(new ChatMessage("local_assistant", reply.ToolResultText));
-                if (!string.IsNullOrWhiteSpace(result)) history.Add(new ChatMessage("assistant", result));
+                ChatMessage answer = null;
+                if (!string.IsNullOrWhiteSpace(result))
+                {
+                    answer = new ChatMessage("assistant", result) { JapaneseText = reply.JapaneseSpeechText };
+                    turn.DisplayedAnswer = answer;
+                    history.Add(answer);
+                }
                 bool narrationFailed = hasToolResult && String.IsNullOrWhiteSpace(result);
                 if (narrationFailed && !String.IsNullOrWhiteSpace(turn.PartialText))
                     history.Add(new ChatMessage("assistant", "【生成中断，未完成】\n" + turn.PartialText));
                 if (String.IsNullOrWhiteSpace(result)) result = reply.ToolResultText;
                 string storageNotice = PersistHistory();
                 input.Clear(); RebuildMessages();
+                if (japaneseSpeech && answer != null && !turn.SpeechStarted && !String.IsNullOrWhiteSpace(reply.DisplayText)
+                    && String.IsNullOrWhiteSpace(reply.JapaneseSpeechText) && OwnsTurn(turn))
+                {
+                    SetStatus("中文回复已显示，正在补充日语配音……", false);
+                    try
+                    {
+                        reply.JapaneseSpeechText = await modelClient.TranslateForSpeechAsync(settings, reply.DisplayText, activeRequest.Token);
+                    }
+                    catch (OperationCanceledException) { if (activeRequest.IsCancellationRequested) return; }
+                    catch (Exception ex) { Program.Log("Voice translation failed: " + ex.GetType().Name); }
+                    if (!OwnsTurn(turn)) return;
+                    if (!String.IsNullOrWhiteSpace(reply.JapaneseSpeechText))
+                    {
+                        answer.JapaneseText = reply.JapaneseSpeechText;
+                        storageNotice = PersistHistory();
+                        RebuildMessages();
+                    }
+                    reply.SpeechNotice = String.IsNullOrWhiteSpace(reply.JapaneseSpeechText)
+                        ? "日语补译未成功，中文回复已保留。" : "";
+                }
                 string replyStatus = "已收到回复 · " + settings.Model + (musicConversation != null ? " · 上下文解析已启用" : "") + (hasToolResult ? " · 操作结果以音乐工具回执为准" : "");
+                CallAssistantText = result;
                 replyStatus += storageNotice.Length == 0 ? " · 聊天已保存到本机" : storageNotice;
                 if (!string.IsNullOrWhiteSpace(reply.SpeechNotice)) replyStatus += "\n" + reply.SpeechNotice;
                 SetStatus(replyStatus, storageNotice.Length > 0);
@@ -277,6 +369,7 @@ namespace AnnaDesktopPet
                 else if (turn.SpeechStarted) { if (endStreamSpeech != null) endStreamSpeech(); }
                 else if(fromVoice && petOwner!=null)petOwner.SpeakVoiceReply(reply.JapaneseSpeechText);
                 else if (japaneseSpeech && assistantReply != null && !string.IsNullOrWhiteSpace(reply.JapaneseSpeechText)) assistantReply(reply.JapaneseSpeechText);
+                if (!narrationFailed && ReplyMotionFinished != null) ReplyMotionFinished(true);
                 if (!activeRequest.IsCancellationRequested) StartMaintenance();
             }
             catch (OperationCanceledException)
@@ -303,7 +396,7 @@ namespace AnnaDesktopPet
                     string error = ex.Message ?? "未知错误";
                     if (!string.IsNullOrEmpty(settings.ApiKey)) error = error.Replace(settings.ApiKey, "[已隐藏密钥]");
                     if (error.Length > 450) error = error.Substring(0, 450);
-                    SetStatus("发送失败：" + error + (partial ? "\n已显示部分标为未完成，可以继续提问。" : "\n输入内容已保留，可以修改设置后重试。") + savedNotice, true);
+                    SetStatus("发送失败：" + error + (partial ? "\n已显示部分标为未完成，可以继续提问。" : "\n输入内容已保留，可以修改设置后重试。") + (remembered == null ? "" : "\n这条记忆已保存在本机。") + savedNotice, true);
                     preview("消息没发成功，可以在聊天窗口查看原因。", 5);
                 }
             }
@@ -316,7 +409,11 @@ namespace AnnaDesktopPet
             }
         }
 
-        private void StopSpeech() { if (stopSpeech != null) { try { stopSpeech(); } catch { } } }
+        private void StopSpeech()
+        {
+            if (ReplyMotionFinished != null) ReplyMotionFinished(false);
+            if (stopSpeech != null) { try { stopSpeech(); } catch { } }
+        }
         private void Stop()
         {
             if (activeReply != null) { InterruptReply("回复已打断"); return; }
@@ -331,8 +428,15 @@ namespace AnnaDesktopPet
             if (busy) return;
             CancelMaintenance(); StopSpeech(); if (cancelMusic != null) cancelMusic();
             var saved = history as ConversationHistory;
-            if (saved != null) saved.StartNew(); else history.Clear();
+            if (saved != null)
+            {
+                string previous = saved.SessionId;
+                saved.StartNew(PetMemory.MemoryGeneration);
+                if (previous == saved.SessionId) { SetStatus(saved.StorageNotice, true); return; }
+            }
+            else history.Clear();
             visibleMessageLimit = 80; input.Clear(); RebuildMessages(); RefreshReadyStatus(); input.Focus();
+            StartMaintenance();
         }
 
         private string PersistHistory()
@@ -348,15 +452,26 @@ namespace AnnaDesktopPet
         private async void StartMaintenance()
         {
             var saved = history as ConversationHistory;
-            if (saved == null || Program.Smoke || closing || String.IsNullOrWhiteSpace(settings.ApiKey)) return;
-            CancelMaintenance();
-            var pending = new CancellationTokenSource(); maintenanceRequest = pending; pending.CancelAfter(TimeSpan.FromSeconds(25));
+            if (saved == null || Program.Smoke || closing || maintenanceRequest != null || String.IsNullOrWhiteSpace(settings.ApiKey)) return;
+            var pending = new CancellationTokenSource(); maintenanceRequest = pending;
             string sessionId = saved.SessionId;
             try
             {
-                string notice = await new ConversationMaintenance(modelClient).UpdateAsync(settings, saved, pending.Token);
-                if (!closing && !pending.IsCancellationRequested && maintenanceRequest == pending && saved.SessionId == sessionId && !busy && notice.Length > 0)
-                    SetStatus("已收到回复 · " + settings.Model + " · 聊天已保留\n" + notice, false);
+                var maintenance = new ConversationMaintenance(modelClient);
+                while (saved.SessionId == sessionId && !pending.IsCancellationRequested)
+                {
+                    ConversationHistory target = saved;
+                    bool active = saved.MemoryProcessedCount < saved.Count || ConversationMaintenance.NextSummaryEnd(saved) > saved.SummarizedCount;
+                    int generation = PetMemory.MemoryGeneration;
+                    if (generation < 0 || (!active && !saved.TryLoadPendingMemory(generation, out target))) break;
+                    int before = target.MemoryProcessedCount, summaryBefore = target.SummarizedCount;
+                    pending.CancelAfter(TimeSpan.FromSeconds(25));
+                    string notice = await maintenance.UpdateAsync(settings, target, pending.Token, active, generation);
+                    if (closing || pending.IsCancellationRequested || maintenanceRequest != pending || saved.SessionId != sessionId) break;
+                    if (!active && (PetMemory.MemoryGeneration != generation || !saved.CommitPendingMemory(target, generation))) break;
+                    if (!busy && notice.Length > 0) SetStatus(notice, false);
+                    if (target.MemoryProcessedCount <= before && target.SummarizedCount <= summaryBefore) break;
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception) { }
@@ -368,41 +483,23 @@ namespace AnnaDesktopPet
             CancelMaintenance();
             foreach (Window window in OwnedWindows)
                 if (window is GptSettingsWindow) { window.Show(); window.Activate(); return; }
-            GptSettingsWindow editor = new GptSettingsWindow(settings); editor.Owner = this;
-            editor.Closed += delegate { if (!closing) { RebuildMessages(); RefreshReadyStatus(); FocusInput(); } };
+            GptSettingsWindow editor = new GptSettingsWindow(settings, ClearChatHistory); editor.Owner = this;
+            editor.Closed += delegate { if (!closing) { RebuildMessages(); RefreshReadyStatus(); FocusInput(); StartMaintenance(); } };
             editor.Show();
         }
 
-        private void OpenMemory()
+        private string ClearChatHistory()
         {
-            if (busy) return;
+            if (busy) return "请等当前回复结束后再清空聊天记录。";
             CancelMaintenance();
-            Window editor = new Window { Title = "杏菜的记忆", Owner = this, Width = 480, Height = 580, MinWidth = 360, MinHeight = 340,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner, FontFamily = FontFamily, Background = GptUi.Brush(238, 245, 252) };
-            StackPanel body = new StackPanel { Margin = new Thickness(20) };
-            body.Children.Add(GptUi.Text("聊天后自动整理喜好、事件与交流方式；推测标为待确认，纠正会更新旧记忆。记录加密保存在本机，聊天时会随请求提供给当前模型。", 12, GptUi.Muted));
-            ListBox list = new ListBox { Margin = new Thickness(0, 12, 0, 10), MinHeight = 230, MaxHeight = 260, FontSize = 13 };
-            Action reload = delegate { list.Items.Clear(); foreach (string item in PetMemory.Items()) list.Items.Add(item); };
-            reload(); body.Children.Add(list);
-            TextBox entry = new TextBox { MaxLength = 200, MinHeight = 34, Padding = new Thickness(8, 5, 8, 5), ToolTip = "输入一条希望杏菜记住的偏好或事实" };
-            body.Children.Add(entry);
-            TextBlock result = GptUi.Text("每条最多 200 字，最多 60 条。", 11, GptUi.Muted); result.Margin = new Thickness(0, 8, 0, 0); body.Children.Add(result);
-            WrapPanel actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
-            Button add = ChatButton("添加记忆", delegate { string value = entry.Text.Trim(); if (value.Length == 0) { result.Text = "先输入要记住的内容。"; return; } result.Text = PetMemory.Handle("记住：" + value); reload(); entry.Clear(); }, true);
-            Button remove = ChatButton("删除选中", delegate { string value = list.SelectedItem as string; if (value == null) { result.Text = "请先选中一条记忆。"; return; } result.Text = PetMemory.Handle("忘记：" + value); reload(); }, false);
-            remove.Margin = new Thickness(8, 0, 0, 0); actions.Children.Add(add); actions.Children.Add(remove); body.Children.Add(actions);
-            Button clearChat = ChatButton("清空本机聊天记录（保留长期记忆）", delegate {
-                if (MessageBox.Show(editor, "删除当前版本的聊天记录、旧会话归档及对话摘要？长期记忆会保留。", "清空聊天记录", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-                CancelMaintenance();
-                var saved = history as ConversationHistory;
-                if (saved != null && !saved.DeleteAll()) { result.Text = saved.StorageNotice; return; }
-                if (cancelMusic != null) cancelMusic();
-                if (saved == null) history.Clear();
-                visibleMessageLimit = 80; RebuildMessages(); RefreshReadyStatus(); result.Text = "聊天记录已清空，长期记忆保留。";
-            }, false);
-            clearChat.Margin = new Thickness(0, 15, 0, 8); body.Children.Add(clearChat);
-            body.Children.Add(GptUi.Text("删除一条记忆不等于删除聊天原文。新对话会归档上一段聊天；摘要和记忆整理会调用当前模型并产生 API 用量。", 11, GptUi.Muted));
-            editor.Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; editor.ShowDialog();
+            var saved = history as ConversationHistory;
+            if (saved != null && !saved.DeleteAll()) return saved.StorageNotice;
+            if (cancelMusic != null) cancelMusic();
+            if (saved == null) history.Clear();
+            visibleMessageLimit = 80;
+            RebuildMessages();
+            RefreshReadyStatus();
+            return "聊天记录已清空，长期记忆已保留。";
         }
 
         internal void VerifyMusicCommandSmoke()
@@ -433,35 +530,46 @@ namespace AnnaDesktopPet
 
         internal void VerifyNoKeySmoke()
         {
+            if (Program.Smoke)
+            {
+                bool originalNight = Appearance.Night;
+                for (int click = 0; click < 2; click++)
+                {
+                    bool before = Appearance.Night;
+                    Button toggle = GptUi.FindSmokeButton(this, before ? "切换到日间配色" : "切换到夜间配色");
+                    if (toggle == null) throw new InvalidOperationException("Missing theme switch");
+                    toggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    if (Appearance.Night == before) throw new InvalidOperationException("Theme switch did not apply");
+                }
+                if (Appearance.Night != originalNight) throw new InvalidOperationException("Theme did not round trip");
+            }
             if (!string.IsNullOrEmpty(settings.ApiKey)) throw new InvalidOperationException("Smoke settings must not include a key.");
             input.Text = "这是一条不应发送到网络的测试消息。";
             string original = input.Text; Send();
             if (busy || request != null || history.Count != 0 || input.Text != original || !status.Text.Contains("没有发送任何请求")) throw new InvalidOperationException("Missing-key protection failed.");
-            GptSettingsWindow editor = new GptSettingsWindow(settings); editor.Owner = this; editor.Show();
-            editor.VerifySmoke(); editor.Close();
+            Button settingsButton = GptUi.FindSmokeButton(this, "设置");
+            if (settingsButton == null || !settingsButton.IsVisible || !settingsButton.IsEnabled ||
+                GptUi.FindSmokeButton(this, "通话") == null || GptUi.FindSmokeButton(this, "新对话") == null ||
+                GptUi.FindSmokeButton(this, "记忆") != null || GptUi.FindSmokeButton(this, "清空本机聊天记录") != null)
+                throw new InvalidOperationException("Chat toolbar must open settings and have no manual memory controls.");
+            settingsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            UpdateLayout();
+            Button modelSettings = GptUi.FindSmokeButton(this, "模型连接");
+            if (SelectedCompanionTab != "settings" || modelSettings == null || !modelSettings.IsVisible)
+                throw new InvalidOperationException("Settings tab did not display the model connection control.");
+            modelSettings.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var editor = OwnedWindows.Count == 1 ? OwnedWindows[0] as GptSettingsWindow : null;
+            if (editor == null || !editor.IsVisible) throw new InvalidOperationException("Chat settings button did not open settings.");
+            try { editor.VerifySmoke(); } finally { editor.Close(); }
+            SelectCompanionTab("chat");
+            if (input.Text != original) throw new InvalidOperationException("Changing tabs lost the unsent draft.");
         }
 
-        private static SolidColorBrush CardBrush(byte alpha) { return Appearance.Night ? new SolidColorBrush(Color.FromArgb(alpha,45,61,82)) : new SolidColorBrush(Color.FromArgb(alpha, 255, 255, 255)); }
-
-        private static BitmapSource LoadChatBackground()
-        {
-            try
-            {
-                string path = String.IsNullOrEmpty(Appearance.Background) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "chat-background.png") : Appearance.Background;
-                using (Stream stream = File.Exists(path) ? File.OpenRead(path) : Assembly.GetExecutingAssembly().GetManifestResourceStream("AnnaDesktopPet.chat-background.png"))
-                {
-                    if (stream == null) return null;
-                    BitmapImage image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.StreamSource = stream; image.EndInit(); image.Freeze(); return image;
-                }
-            }
-            catch { return null; }
-        }
-
-        private static Button ChatButton(string text, Action action, bool primary)
+        internal static Button ChatButton(string text, Action action, bool primary)
         {
             Button button = GptUi.Button(text, action, primary); button.FontWeight = FontWeights.SemiBold;
-            button.Background = primary ? GptUi.Brush(50, 103, 151) : GptUi.Brush(245, 249, 253);
-            button.Foreground = primary ? Brushes.White : GptUi.Brush(42, 79, 113);
+            button.Background = primary ? GptUi.Brush(50, 103, 151) : PanelPalette.Surface;
+            button.Foreground = primary ? Brushes.White : PanelPalette.Ink;
             button.BorderBrush = primary ? GptUi.Brush(50, 103, 151) : GptUi.Brush(207, 224, 238);
             ControlTemplate template = new ControlTemplate(typeof(Button));
             FrameworkElementFactory border = new FrameworkElementFactory(typeof(Border));
@@ -490,48 +598,52 @@ namespace AnnaDesktopPet
         private readonly CheckBox remember;
         private readonly TextBlock status;
 
-        internal GptSettingsWindow(GptSettings current)
+        internal GptSettingsWindow(GptSettings current, Func<string> clearChatHistory)
         {
             settings = current;
 #if DEEPSEEK
-            Title = "DeepSeek 设置 · 杏菜"; Width = 495; Height = 545; MinWidth = 440; MinHeight = 500;
+            const string provider = "DeepSeek";
 #else
-            Title = "GPT 设置 · 杏菜"; Width = 495; Height = 545; MinWidth = 440; MinHeight = 500;
+            const string provider = "GPT";
 #endif
+            Title = provider + " 设置 · 杏菜"; Width = 485; Height = 540; MinWidth = 350; MinHeight = 420;
             ResizeMode = ResizeMode.CanResize; WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
-            FontFamily = new FontFamily("Microsoft YaHei UI"); Background = GptUi.Brush(245, 249, 253);
-            ScrollViewer scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-            StackPanel body = new StackPanel { Margin = new Thickness(25, 22, 25, 20) }; scroll.Content = body; Content = scroll;
+            StackPanel body = new StackPanel { Margin = new Thickness(17, 16, 17, 14) }; Content = body;
 #if DEEPSEEK
-            TextBlock heading = GptUi.Text("把 DeepSeek 接到杏菜身边", 22, GptUi.Ink); heading.FontWeight = FontWeights.SemiBold; body.Children.Add(heading);
+            body.Children.Add(GptUi.Text("DeepSeek API Key", 13, GptChatWindow.PanelText));
 #else
-            TextBlock heading = GptUi.Text("把 GPT 接到杏菜身边", 22, GptUi.Ink); heading.FontWeight = FontWeights.SemiBold; body.Children.Add(heading);
+            body.Children.Add(GptUi.Text("OpenAI API Key", 13, GptChatWindow.PanelText));
 #endif
-            TextBlock subtitle = GptUi.Text("现在没有 API Key 也没关系，稍后再填写即可。", 12, GptUi.Muted); subtitle.LineHeight = 21; subtitle.Margin = new Thickness(0, 8, 0, 19); body.Children.Add(subtitle);
-#if DEEPSEEK
-            body.Children.Add(GptUi.Text("DeepSeek API Key", 13, GptUi.Ink));
-#else
-            body.Children.Add(GptUi.Text("OpenAI API Key", 13, GptUi.Ink));
-#endif
-            secret = new PasswordBox { Password = current.ApiKey ?? "", Padding = new Thickness(10, 8, 10, 8), FontSize = 14, Margin = new Thickness(0, 7, 0, 14), Background = Brushes.White, BorderBrush = GptUi.Brush(205, 221, 234), BorderThickness = new Thickness(1), MaxLength = 512 };
+            secret = new PasswordBox { Password = current.ApiKey ?? "", Padding = new Thickness(10, 8, 10, 8), FontSize = 14, Margin = new Thickness(0, 7, 0, 14), Background = PanelPalette.Surface, Foreground = PanelPalette.Ink, BorderBrush = PanelPalette.Line, BorderThickness = new Thickness(1), MaxLength = 512 };
             body.Children.Add(secret);
-            body.Children.Add(GptUi.Text("模型名称", 13, GptUi.Ink));
+            body.Children.Add(GptUi.Text("模型名称", 13, GptChatWindow.PanelText));
 #if DEEPSEEK
-            model = new TextBox { Text = string.IsNullOrWhiteSpace(current.Model) ? "deepseek-flash" : current.Model, Padding = new Thickness(10, 8, 10, 8), FontSize = 13, MaxLength = 100, Margin = new Thickness(0, 7, 0, 14), Background = Brushes.White, BorderBrush = GptUi.Brush(205, 221, 234), BorderThickness = new Thickness(1) };
+            model = new TextBox { Text = string.IsNullOrWhiteSpace(current.Model) ? "deepseek-flash" : current.Model, Padding = new Thickness(10, 8, 10, 8), FontSize = 13, MaxLength = 100, Margin = new Thickness(0, 7, 0, 14), Background = PanelPalette.Surface, Foreground = PanelPalette.Ink, BorderBrush = PanelPalette.Line, BorderThickness = new Thickness(1) };
 #else
-            model = new TextBox { Text = string.IsNullOrWhiteSpace(current.Model) ? "gpt-6-luna" : current.Model, Padding = new Thickness(10, 8, 10, 8), FontSize = 13, MaxLength = 100, Margin = new Thickness(0, 7, 0, 14), Background = Brushes.White, BorderBrush = GptUi.Brush(205, 221, 234), BorderThickness = new Thickness(1) };
+            model = new TextBox { Text = string.IsNullOrWhiteSpace(current.Model) ? "gpt-6-luna" : current.Model, Padding = new Thickness(10, 8, 10, 8), FontSize = 13, MaxLength = 100, Margin = new Thickness(0, 7, 0, 14), Background = PanelPalette.Surface, Foreground = PanelPalette.Ink, BorderBrush = PanelPalette.Line, BorderThickness = new Thickness(1) };
 #endif
             body.Children.Add(model);
-            remember = new CheckBox { Content = "为当前 Windows 账户记住 API Key", IsChecked = current.RememberKey, Foreground = GptUi.Ink, FontSize = 12, Margin = new Thickness(0, 0, 0, 8) }; body.Children.Add(remember);
-            TextBlock storage = GptUi.Text("勾选后使用 Windows 账户加密保存在本机；不勾选则只在当前程序内存中使用。", 11, GptUi.Muted); storage.LineHeight = 19; storage.Margin = new Thickness(0, 0, 0, 15); body.Children.Add(storage);
-            Border note = new Border { Background = Brushes.White, CornerRadius = new CornerRadius(10), Padding = new Thickness(13), BorderBrush = GptUi.Brush(222, 233, 242), BorderThickness = new Thickness(1) };
+            remember = new CheckBox { Content = "为当前 Windows 账户记住 API Key", IsChecked = current.RememberKey, Foreground = GptChatWindow.PanelText, FontSize = 12, Margin = new Thickness(0, 0, 0, 8) }; body.Children.Add(remember);
+            TextBlock storage = GptUi.Text("勾选后使用 Windows 账户加密保存在本机；不勾选则只在当前程序内存中使用。", 11, GptChatWindow.PanelQuiet); storage.LineHeight = 19; storage.Margin = new Thickness(0, 0, 0, 15); body.Children.Add(storage);
+            Border note = new Border { Background = PanelPalette.Sky, CornerRadius = new CornerRadius(9), Padding = new Thickness(11, 9, 11, 9) };
 #if DEEPSEEK
-            TextBlock explanation = GptUi.Text("DeepSeek API Key 与网页账号分开，使用情况以 DeepSeek 平台为准。\n\n聊天会发送当前文字、最近对话、较早对话摘要/相关片段及长期记忆。聊天加密保存在本机；后台摘要和记忆整理也会调用当前模型并产生用量。不读取屏幕或无关文件。", 12, GptUi.Muted); explanation.LineHeight = 20; note.Child = explanation; body.Children.Add(note);
+            const string billing = "DeepSeek API Key 与网页账号分开，使用情况以 DeepSeek 平台为准。";
 #else
-            TextBlock explanation = GptUi.Text("OpenAI API 单独计费，ChatGPT 订阅不等同于 API 额度。\n\n聊天会发送当前文字、最近对话、较早对话摘要/相关片段及长期记忆。聊天加密保存在本机；后台摘要和记忆整理也会调用当前模型并产生用量。不读取屏幕或无关文件。", 12, GptUi.Muted); explanation.LineHeight = 20; note.Child = explanation; body.Children.Add(note);
+            const string billing = "OpenAI API 单独计费，使用情况以 OpenAI 平台为准。";
 #endif
-            Button save = GptUi.Button("保存设置", Save, true); save.Margin = new Thickness(0, 17, 0, 0); save.HorizontalAlignment = HorizontalAlignment.Stretch; body.Children.Add(save);
-            status = GptUi.Text("保存设置不会发送测试请求。", 11, GptUi.Muted); status.LineHeight = 18; status.Margin = new Thickness(0, 9, 0, 0); body.Children.Add(status);
+            TextBlock explanation = GptUi.Text(billing + "\n\n你在聊天中说到的称呼、明确喜好会自动加密保存在本机。联网聊天时，当前模型会收到你的消息、相关聊天记录和记忆。后台用模型整理较复杂的记忆和摘要时也会产生 API 用量。", 12, GptChatWindow.PanelQuiet);
+            explanation.LineHeight = 20; note.Child = explanation; body.Children.Add(note);
+            Button save = GptChatWindow.ChatButton("保存设置", Save, true); save.Margin = new Thickness(0, 14, 0, 0); save.HorizontalAlignment = HorizontalAlignment.Stretch; body.Children.Add(save);
+            status = GptUi.Text("保存设置不会发送测试请求。", 11, GptChatWindow.PanelQuiet); status.LineHeight = 18; status.Margin = new Thickness(0, 9, 0, 0); body.Children.Add(status);
+            Button clearChat = GptChatWindow.ChatButton("清空本机聊天记录", delegate {
+                if (MessageBox.Show(this, "要清空当前版本的聊天记录、旧会话归档和对话摘要吗？杏菜会保留已经记住的事情。",
+                    "清空聊天记录", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                    status.Text = clearChatHistory();
+            }, false);
+            clearChat.HorizontalAlignment = HorizontalAlignment.Left;
+            clearChat.Margin = new Thickness(0, 16, 0, 0);
+            body.Children.Add(clearChat);
+            PanelTheme.Apply(this, provider + " 模型连接", "MODEL");
         }
         private void Save()
         {
@@ -549,11 +661,29 @@ namespace AnnaDesktopPet
         internal void VerifySmoke()
         {
             if (secret == null || secret.Password.Length != 0 || model.Text.Length == 0 || !string.IsNullOrEmpty(settings.ApiKey)) throw new InvalidOperationException("GPT settings initialization failed.");
+            Button clear = GptUi.FindSmokeButton(this, "清空本机聊天记录");
+            if (clear == null || !clear.IsVisible || !clear.IsEnabled ||
+                GptUi.FindSmokeButton(this, "添加记忆") != null || GptUi.FindSmokeButton(this, "删除选中") != null)
+                throw new InvalidOperationException("Settings must offer chat history clearing without manual memory editing.");
         }
     }
 
     internal static class GptUi
     {
+        internal static Button FindSmokeButton(DependencyObject root, string label)
+        {
+            Button button = root as Button;
+            if (button != null && ((button.Content as string) == label || System.Windows.Automation.AutomationProperties.GetName(button) == label)) return button;
+            foreach (object child in LogicalTreeHelper.GetChildren(root))
+            {
+                var element = child as DependencyObject;
+                if (element == null) continue;
+                Button found = FindSmokeButton(element, label);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         internal static SolidColorBrush Ink {get{return Appearance.Night ? Brush(225,235,247) : Brush(39,58,77);}}
         internal static SolidColorBrush Muted {get{return Appearance.Night ? Brush(179,198,220) : Brush(112,131,148);}}
         internal static readonly SolidColorBrush Blue = Brush(42, 115, 173);

@@ -1,15 +1,17 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Diagnostics;
+using System.Threading;
 using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 
 namespace AnnaDesktopPet {
 #if MEMORY_TEST_STANDALONE
     internal static class Program { internal static string DataDir; internal static bool Smoke; }
-    internal sealed class ChatMessage { public string Role, Content; public DateTime? CreatedUtc; public ChatMessage(string role,string content){Role=role;Content=content;CreatedUtc=DateTime.UtcNow;} }
+    internal sealed class ChatMessage { public string Role, Content; public string JapaneseText; public DateTime? CreatedUtc; public ChatMessage(string role,string content){Role=role;Content=content;CreatedUtc=DateTime.UtcNow;} }
 #endif
     internal static class SemanticMemoryTests {
         static int checks;
@@ -22,10 +24,118 @@ namespace AnnaDesktopPet {
             Check(m!=null,"semantic memory application has not been implemented");
             return (int)m.Invoke(null,new object[]{raw,evidence,new DateTime(2026,11,9,12,0,0,DateTimeKind.Utc)});
         }
-        [STAThread] static int Main() {
+        static void CheckLocalObservation(string root) {
+            Program.DataDir=Path.Combine(root,"autonomous");
+            var start=new DateTime(2026,10,4,8,30,0,DateTimeKind.Utc);
+            var empty=new List<ChatMessage>();
+            string request="来首Ado的歌";
+            foreach(string kind in new[]{"preference","event","fact"})
+                Check(Apply(Packet("artist:ado","用户喜欢 Ado 的歌","explicit","Ado","",kind),new ChatMessage("user",request))==0,"one-off music request stays out when quote only names artist: "+kind);
+            foreach(string ignored in new[]{request, "我喜欢抹茶吗？", "我喜欢咖啡，但是别记", "我喜欢咖啡，但不要长期保存", "我喜欢汉堡。如果我喜欢面包呢？", "她说：我喜欢跑步", "我喜欢咖啡，验证码123456", "我的昵称是小葵吗？", "她说：我家的猫叫布丁", "我家的猫叫什么"}) {
+                Check(PetMemory.Observe(ignored,start,empty)==null,"ordinary task, question, quote, private or opt-out is ignored");
+            }
+            var roleplay=new List<ChatMessage>{new ChatMessage("user","我们来角色扮演"),new ChatMessage("assistant","你是店长。")};
+            Check(PetMemory.Observe("我喜欢芒果",start,roleplay)==null,"roleplay context carries across turns");
+            roleplay.Add(new ChatMessage("user","退出角色扮演"));
+            string statement="我喜欢抹茶，你呢？";
+            Check(PetMemory.Observe(statement,start,roleplay)=="用户喜欢抹茶","first-person fact before a separate question saved automatically");
+            string path=Path.Combine(Program.DataDir,"memory-v2.bin");
+            byte[] first=File.ReadAllBytes(path);
+            Check(PetMemory.Observe("我喜欢抹茶。你呢？",start.AddMinutes(1),empty)=="用户喜欢抹茶"&&
+                Convert.ToBase64String(first)==Convert.ToBase64String(File.ReadAllBytes(path)),"same existing fact acknowledges without another disk write");
+            Check(!Encoding.UTF8.GetString(first).Contains("抹茶")&&PetMemory.Context().Contains("用户喜欢抹茶"),"automatic fact encrypted and available to next prompt");
+            Check(PetMemory.Observe("我现在不喜欢抹茶了",start.AddMinutes(2),empty)=="用户不喜欢抹茶"&&PetMemory.Items().Length==1,"later ordinary preference replaces earlier polarity");
+            Check(Apply(Packet("food:tea","用户偏爱抹茶","explicit","我喜欢抹茶"),new ChatMessage("user",statement){CreatedUtc=start})==0,"earlier semantic paraphrase cannot resurrect stale preference");
+            Check(Apply(Packet("food:tea","用户偏爱抹茶","explicit","我喜欢抹茶"),new ChatMessage("user",statement){CreatedUtc=null})==0,"undated semantic paraphrase cannot resurrect stale preference");
+            string multi="我喜欢跑步，我喜欢摄影";
+            Check(PetMemory.Observe(multi,start.AddMinutes(3),empty)!=null&&PetMemory.Items().Length==3,"two different preference clauses both committed");
+            var original=new ChatMessage("user",multi){CreatedUtc=start.AddMinutes(3)};
+            Check(Apply(Packet("sport:run","用户的爱好是跑步","explicit","我喜欢跑步"),original)==0&&
+                Apply(Packet("hobby:photo","用户的爱好是摄影","explicit","我喜欢摄影"),original)==0&&PetMemory.Items().Length==3,"semantic paraphrases of each local fact are idempotent");
+            Check(PetMemory.Observe("以后请叫我小禾",start.AddMinutes(4),empty)!=null&&PetMemory.Observe("以后请叫我阿禾",start.AddMinutes(5),empty)!=null,"nickname updates from normal conversation");
+            Check(PetMemory.Observe("以后回复尽量简短",start,empty)!=null&&PetMemory.Observe("回答详细一些",start.AddMinutes(1),empty)!=null,"communication style corrected");
+            Check(PetMemory.Observe("我养了一只叫奶糖的猫",start,empty)!=null&&PetMemory.Observe("我明天要参加面试",start,empty)!=null,"pet fact and dated event saved offline");
+            var rows=(object[])new JavaScriptSerializer().DeserializeObject(PetMemory.SnapshotJson());
+            var kinds=new Dictionary<string,string>();
+            foreach(Dictionary<string,object> row in rows)kinds[(string)row["text"]]=(string)row["kind"];
+            Check(kinds.Count==7&&kinds["用户希望被称为阿禾"]=="communication"&&kinds["用户希望回复详细"]=="communication"&&kinds["用户养了一只叫奶糖的猫"]=="fact"&&kinds["用户明天要参加面试"]=="event","locally observed facts separated by kind and corrections persisted");
+            Check(PetMemory.Observe("我的昵称是小葵",start.AddMinutes(6),empty)=="用户希望被称为小葵"&&PetMemory.Observe("我家的猫叫布丁",start,empty)=="用户养了一只叫布丁的猫","nickname and pet naming alternate phrasing recognized");
+            Check(PetMemory.Observe("我养了一只叫布丁的猫",start,empty)=="用户养了一只叫布丁的猫"&&PetMemory.Items().Length==8,"equivalent pet phrase shares a stable key");
+            Check(Apply(Packet("event:second","用户周末出差","explicit","周末出差","","event"),new ChatMessage("user","周末出差，来首Ado的歌"))==1,"one-off music request does not discard independent event in same turn");
+            string store=Program.DataDir;Program.DataDir=Path.Combine(root,"other-profile");
+            Check(PetMemory.Context()=="","an empty profile has no memory");
+            Program.DataDir=store;Check(PetMemory.Context().Contains("奶糖")&&PetMemory.Context().Contains(start.ToString("yyyy-MM-dd")),"reopen original data from disk for a fresh conversation");
+            Program.DataDir=root;
+        }
+        static int ConcurrentWorker(string dir,string side) {
+            Program.DataDir=dir;Program.Smoke=false;
+            string start=Path.Combine(dir,"start.signal");
+            File.WriteAllText(Path.Combine(dir,side+".ready"),"");
+            var timer=Stopwatch.StartNew();
+            while(!File.Exists(start)){if(timer.ElapsedMilliseconds>10000)return 2;Thread.Sleep(10);}
+            for(int i=0;i<18;i++) {
+                if(PetMemory.Observe("我喜欢"+side+i)==null)return 3;
+                if(side=="A"&&i==8&&!PetMemory.Handle("忘记：用户喜欢旧面包").Contains("已删除"))return 4;
+            }
+            return 0;
+        }
+        static Process StartWorker(string dir,string side) {
+            var info=new ProcessStartInfo(Assembly.GetExecutingAssembly().Location,"--memory-worker \""+dir+"\" "+side);
+            info.UseShellExecute=false;info.CreateNoWindow=true;info.WindowStyle=ProcessWindowStyle.Hidden;
+            return Process.Start(info);
+        }
+        static void CheckConcurrentWriters(string root) {
+            string dir=Path.Combine(root,"concurrent");
+            Program.DataDir=dir;Directory.CreateDirectory(dir);
+            PetMemory.Observe("我喜欢旧面包");
+            int generation=PetMemory.MemoryGeneration;
+            using(var a=StartWorker(dir,"A"))using(var b=StartWorker(dir,"B")) {
+                var timer=Stopwatch.StartNew();
+                while(!File.Exists(Path.Combine(dir,"A.ready"))||!File.Exists(Path.Combine(dir,"B.ready"))) {
+                    if(a.HasExited||b.HasExited||timer.ElapsedMilliseconds>=10000)throw new Exception("isolated memory worker startup failed");
+                    Thread.Sleep(10);
+                }
+                File.WriteAllText(Path.Combine(dir,"start.signal"),"");
+                Check(a.WaitForExit(15000)&&b.WaitForExit(15000)&&a.ExitCode==0&&b.ExitCode==0,"both independent memory writers completed");
+            }
+            var rows=new HashSet<string>(PetMemory.Items());
+            Check(rows.Count==36&&!rows.Contains("用户喜欢旧面包"),"both writers and concurrent forgetting survived reopen");
+            for(int i=0;i<18;i++)Check(rows.Contains("用户喜欢A"+i)&&rows.Contains("用户喜欢B"+i),"concurrent appends preserved");
+            var old=new ChatMessage("user","我喜欢旧面包");
+            Check(PetMemory.ApplySemantic(Packet("bakery","用户偏好旧面包","explicit",old.Content),new[]{old},DateTime.UtcNow,generation)==0,"prior process cannot reapply pre-forget batch");
+            Program.DataDir=root;
+        }
+        static void CheckRecallBeyondLimit(string root) {
+            Program.DataDir=Path.Combine(root,"recall");
+            Check(PetMemory.Observe("我喜欢山间观鸟")!=null&&PetMemory.Observe("以后叫我小秋")!=null,"early personal records written");
+            for(int i=0;i<75;i++)if(PetMemory.Observe("我喜欢测试爱好"+i)==null)throw new Exception("failed to append memory "+i);
+            Check(PetMemory.Items().Length==77,"automatic memory keeps learning past sixty entries");
+            Check(PetMemory.Handle("记住：用户很喜欢晴天").Contains("记住")&&Apply(Packet("habit:reading","用户每天阅读古典文学","explicit","我每天阅读古典文学","","fact"),new ChatMessage("user","我每天阅读古典文学"))==1&&PetMemory.Items().Length==79,"manual and semantic writers share the expanded store");
+            string query="你还记得我喜欢在哪里观鸟吗？";
+            var recall=new HashSet<string>(PetMemory.Items(query));
+            Check(recall.Count==60&&recall.Contains("用户喜欢山间观鸟")&&recall.Contains("用户希望被称为小秋")&&recall.Contains("用户喜欢测试爱好74"),"bounded recall includes an old relevant fact, preferred name and recent facts");
+            Check(Array.IndexOf(PetMemory.Items(""),"用户喜欢山间观鸟")<0,"unrelated old memory falls outside default context");
+            Check(PetMemory.Context(query).Contains("山间观鸟")&&PetMemory.SnapshotJson(query).Contains("山间观鸟")&&((object[])new JavaScriptSerializer().DeserializeObject(PetMemory.SnapshotJson(query))).Length==60,"all model request paths share bounded contextual recall");
+            Check(PetMemory.Observe("我不喜欢山间观鸟")=="用户不喜欢山间观鸟"&&PetMemory.Items().Length==79,"full collection supports ordinary corrections");
+            Check(PetMemory.Handle("忘记：用户不喜欢山间观鸟").Contains("删除")&&PetMemory.Items().Length==78,"full collection supports forgetting");
+            string storePath=Path.Combine(Program.DataDir,"memory-v2.bin");
+            byte[] good=File.ReadAllBytes(storePath);
+            var oversized=new MemoryDocument();
+            oversized.Exclusions.Add(new string('测',1400000));
+            var save=typeof(PetMemory).GetMethod("Save",BindingFlags.Static|BindingFlags.NonPublic);
+            bool rejected=false;
+            try {save.Invoke(null,new object[]{oversized});}catch(TargetInvocationException e){rejected=e.InnerException is IOException;}
+            Check(rejected&&Convert.ToBase64String(File.ReadAllBytes(storePath))==Convert.ToBase64String(good)&&Directory.GetFiles(Program.DataDir,"*.tmp").Length==0,"oversized UTF-8 store rejected before replacing existing records");
+            Program.DataDir=root;
+        }
+        [STAThread] static int Main(string[] args) {
+            if(args.Length==3&&args[0]=="--memory-worker"&&(args[2]=="A"||args[2]=="B"))return ConcurrentWorker(args[1],args[2]);
             string temp=Path.Combine(Path.GetTempPath(),"anna-memory-tests-"+Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(temp);Program.DataDir=temp;Program.Smoke=false;
             try {
+                CheckLocalObservation(temp);
+                CheckConcurrentWriters(temp);
+                CheckRecallBeyondLimit(temp);
                 string quote="每天上班路上我都会买一杯无糖咖啡。";
                 var user=new ChatMessage("user",quote);
                 var liveCandidate=SemanticMemory.Parse(Packet("drink:coffee","用户习惯每天上班路上买一杯无糖咖啡，偏好无糖口味，不选甜的饮料","explicit",quote),new[]{user});
@@ -57,8 +167,7 @@ namespace AnnaDesktopPet {
                 int before=PetMemory.Items().Length;
                 string bad="{\"memories\":[{\"key\":\"food:bread\",\"text\":\"用户喜欢面包\",\"kind\":\"preference\",\"certainty\":\"explicit\",\"evidence\":\"我喜欢面包\",\"replaces\":\"\"},{\"key\":3}]}";
                 Check(Apply(bad,new ChatMessage("user","我喜欢面包"))==-1&&PetMemory.Items().Length==before,"invalid batch applies nothing and allows retry");
-                string syntheticSecret="sk-"+new string('x',24); // Synthetic fixture, never a credential.
-                Check(Apply(Packet("secret:key","用户密钥 "+syntheticSecret,"explicit","密钥 "+syntheticSecret),new ChatMessage("user","密钥 "+syntheticSecret))==0,"secrets excluded");
+                Check(Apply(Packet("secret:key","用户密钥 sk-" + new string('x', 20) + "","explicit","密钥 sk-" + new string('x', 20) + ""),new ChatMessage("user","密钥 sk-" + new string('x', 20) + ""))==0,"secrets excluded");
                 Check(Apply(Packet("personality:diagnosis","用户有抑郁症","tentative","今天有点难过"),new ChatMessage("user","今天有点难过"))==0,"no diagnostic inference");
                 string forgot=PetMemory.Items()[0];
                 Check(PetMemory.Handle("忘记："+forgot).Contains("删除"),"delete displayed memory");

@@ -1,0 +1,36 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "Anna-ghost.moc3",
+    "Textures": [
+      "ghost-texture.png"
+    ],
+    "DisplayInfo": "Anna-ghost.cdi3.json",
+    "Motions": {
+      "Idle": [
+        {
+          "File": "motions/Ghost-idle.motion3.json",
+          "FadeInTime": 0.35,
+          "FadeOutTime": 0.35
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ]
+}

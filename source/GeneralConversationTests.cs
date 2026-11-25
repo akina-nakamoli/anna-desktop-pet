@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -177,6 +177,8 @@ namespace AnnaDesktopPet
             Check(Json.Serialize(history) == before && history.Count == 28, "Context preparation preserves complete local transcript");
             Check(history.Summary.Contains("周六"), "Payload assembly does not silently mutate stored summary");
 
+            var randomArtist = GptClient.ParseMusicIntent("{\"intent\":\"random_artist\",\"query\":\"Ado\",\"choice\":0,\"command\":\"\",\"question\":\"\"}", null);
+            Check(randomArtist.Intent == "random_artist" && randomArtist.Query == "Ado", "Explicit random artist intent accepts an artist without a song title");
             var intent = Object(GptClient.BuildMusicIntentPayload(new GptSettings().Model, history, "那就放刚才推荐的那首", new MusicCandidateSnapshot()));
             var packet = Object(Content(Messages(intent)[0]));
             Check(packet.ContainsKey("conversation_context"), "Music resolver shares older conversational context");
@@ -481,7 +483,7 @@ namespace AnnaDesktopPet
         private static Button FindButton(DependencyObject node, string label)
         {
             var button = node as Button;
-            if (button != null && Convert.ToString(button.Content) == label) return button;
+            if (button != null && (Convert.ToString(button.Content) == label || System.Windows.Automation.AutomationProperties.GetName(button) == label)) return button;
             foreach (object child in LogicalTreeHelper.GetChildren(node)) {
                 var dependency = child as DependencyObject;
                 if (dependency != null) { Button found = FindButton(dependency, label); if (found != null) return found; }

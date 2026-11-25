@@ -15,6 +15,7 @@ namespace AnnaDesktopPet
         private bool blockedByCorruption;
         private bool preserveDamagedCurrent;
         private readonly object gate = new object();
+        private List<PendingArchive> pendingMemory = new List<PendingArchive>();
         public string Summary = "";
         public int SummarizedCount;
         public int MemoryProcessedCount;
@@ -115,22 +116,33 @@ namespace AnnaDesktopPet
         // A failed archive/reset leaves the current in-memory conversation intact.
         internal void StartNew()
         {
+            StartNew(-1);
+        }
+
+        internal void StartNew(int memoryGeneration)
+        {
             lock (gate)
             {
                 if (filePath == null) { Reset(); return; }
                 if (!Save()) return;
                 try
                 {
+                    List<PendingArchive> pending = new List<PendingArchive>(pendingMemory);
                     if (Count > 0)
                     {
                         EnsureOrdinaryPath(ArchiveDirectory);
                         Directory.CreateDirectory(ArchiveDirectory);
                         string archive = Path.Combine(ArchiveDirectory, SessionId + ".bin");
-                        AtomicWrite(archive, Encode(Capture()), false);
+                        Snapshot snapshot = Capture();
+                        snapshot.PendingMemory = null;
+                        AtomicWrite(archive, Encode(snapshot), false);
+                        if (memoryGeneration >= 0 && FindIndex(MemoryProcessedCount, message => message.Role == "user") >= 0)
+                            pending.Add(new PendingArchive { SessionId = SessionId, Generation = memoryGeneration,
+                                Cursor = MemoryProcessedCount, MessageCount = Count });
                     }
                     // Prepare the new disk snapshot before mutating live state.
                     Snapshot empty = new Snapshot { Version = 1, SessionId = Guid.NewGuid().ToString("N"),
-                        Summary = "", Messages = new List<StoredMessage>() };
+                        Summary = "", Messages = new List<StoredMessage>(), PendingMemory = pending };
                     AtomicWrite(filePath, Encode(empty), true);
                     Restore(empty);
                     StorageNotice = "";
@@ -140,6 +152,70 @@ namespace AnnaDesktopPet
                     StorageNotice = "新对话暂未开始：旧对话未能完整保存或归档，当前内容已保留。";
                 }
             }
+        }
+
+        // Read only referenced archives. Older archives were never queued and stay untouched.
+        internal bool TryLoadPendingMemory(int currentGeneration, out ConversationHistory archive)
+        {
+            lock (gate)
+            {
+                archive = null;
+                if (filePath == null || currentGeneration < 0 || pendingMemory.Count == 0) return false;
+                if (pendingMemory.Exists(p => p.Generation != currentGeneration) &&
+                    !SavePending(pendingMemory.FindAll(p => p.Generation == currentGeneration))) return false;
+                foreach (PendingArchive item in pendingMemory)
+                {
+                    try
+                    {
+                        Snapshot snapshot = ReadSnapshot(Path.Combine(ArchiveDirectory, item.SessionId + ".bin"));
+                        if (snapshot.SessionId != item.SessionId || snapshot.Messages.Count != item.MessageCount)
+                            throw new InvalidDataException();
+                        var detached = new ConversationHistory();
+                        detached.Restore(snapshot);
+                        detached.MemoryProcessedCount = item.Cursor;
+                        archive = detached;
+                        return true;
+                    }
+                    catch (Exception)
+                    {
+                        StorageNotice = "部分聊天归档暂时无法读取，记忆整理进度已保留。";
+                    }
+                }
+                return false;
+            }
+        }
+
+        internal bool CommitPendingMemory(ConversationHistory archive, int generation)
+        {
+            lock (gate)
+            {
+                if (archive == null || archive.FilePath != null) return false;
+                int index = pendingMemory.FindIndex(p => p.Generation == generation && p.SessionId == archive.SessionId);
+                if (index < 0) return false;
+                PendingArchive item = pendingMemory[index];
+                int cursor = archive.MemoryProcessedCount;
+                if (archive.Count != item.MessageCount || cursor < 0 || cursor > item.MessageCount) return false;
+                if (cursor <= item.Cursor) return true;
+                var updated = new List<PendingArchive>(pendingMemory);
+                if (cursor == item.MessageCount) updated.RemoveAt(index);
+                else updated[index] = new PendingArchive { SessionId = item.SessionId, Generation = generation,
+                    Cursor = cursor, MessageCount = item.MessageCount };
+                return SavePending(updated);
+            }
+        }
+
+        internal bool DiscardPendingMemory()
+        {
+            lock (gate) return pendingMemory.Count == 0 || SavePending(new List<PendingArchive>());
+        }
+
+        private bool SavePending(List<PendingArchive> updated)
+        {
+            List<PendingArchive> previous = pendingMemory;
+            pendingMemory = updated;
+            if (Save()) return true;
+            pendingMemory = previous;
+            return false;
         }
 
         // Explicit deletion only targets this provider's active file, backups and owned archive names.
@@ -198,6 +274,7 @@ namespace AnnaDesktopPet
         private void Reset()
         {
             Clear(); Summary = ""; SummarizedCount = MemoryProcessedCount = 0;
+            pendingMemory.Clear();
             SessionId = Guid.NewGuid().ToString("N");
         }
 
@@ -212,11 +289,11 @@ namespace AnnaDesktopPet
         {
             Snapshot data = new Snapshot { Version = 1, SessionId = SessionId, Summary = Summary,
                 SummarizedCount = SummarizedCount, MemoryProcessedCount = MemoryProcessedCount,
-                Messages = new List<StoredMessage>() };
+                Messages = new List<StoredMessage>(), PendingMemory = pendingMemory };
             foreach (ChatMessage message in this)
             {
                 if (message == null) throw new InvalidDataException();
-                data.Messages.Add(new StoredMessage { Role = message.Role, Content = message.Content,
+                data.Messages.Add(new StoredMessage { Role = message.Role, Content = message.Content, JapaneseText = message.JapaneseText,
                     CreatedUtc = message.CreatedUtc.HasValue ? (DateTime?)message.CreatedUtc.Value.ToUniversalTime() : null });
             }
             Validate(data); return data;
@@ -226,19 +303,28 @@ namespace AnnaDesktopPet
         {
             Validate(data); Clear();
             foreach (StoredMessage message in data.Messages)
-                Add(new ChatMessage(message.Role, message.Content) { CreatedUtc = message.CreatedUtc });
+                Add(new ChatMessage(message.Role, message.Content) { CreatedUtc = message.CreatedUtc, JapaneseText = message.JapaneseText });
             Summary = data.Summary; SessionId = data.SessionId;
             SummarizedCount = data.SummarizedCount; MemoryProcessedCount = data.MemoryProcessedCount;
+            pendingMemory = data.PendingMemory ?? new List<PendingArchive>();
         }
 
         private static void Validate(Snapshot data)
         {
             Guid id;
             if (data == null || data.Version != 1 || data.Messages == null || data.Summary == null ||
-                data.Summary.Length > 6000 || !Guid.TryParseExact(data.SessionId, "N", out id) ||
+                data.Summary.Length > 6000 || data.SessionId == null || data.SessionId.Length != 32 || !Guid.TryParseExact(data.SessionId, "N", out id) ||
                 data.SummarizedCount < 0 || data.SummarizedCount > data.Messages.Count ||
                 data.MemoryProcessedCount < 0 || data.MemoryProcessedCount > data.Messages.Count ||
                 data.SummarizedCount > 0 && String.IsNullOrWhiteSpace(data.Summary)) throw new InvalidDataException();
+            if (data.PendingMemory != null)
+            {
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { data.SessionId };
+                foreach (PendingArchive item in data.PendingMemory)
+                    if (item == null || item.SessionId == null || item.SessionId.Length != 32 ||
+                        !Guid.TryParseExact(item.SessionId, "N", out id) || !seen.Add(item.SessionId) ||
+                        item.Generation < 0 || item.Cursor < 0 || item.Cursor >= item.MessageCount) throw new InvalidDataException();
+            }
             foreach (StoredMessage message in data.Messages)
                 if (message == null || message.Content == null || message.Content.Length > 1024 * 1024 ||
                     Array.IndexOf(new[] { "user", "assistant", "local_user", "local_assistant" }, message.Role) < 0)
@@ -297,7 +383,13 @@ namespace AnnaDesktopPet
             public int SummarizedCount;
             public int MemoryProcessedCount;
             public List<StoredMessage> Messages;
+            public List<PendingArchive> PendingMemory;
         }
-        internal sealed class StoredMessage { public string Role; public string Content; public DateTime? CreatedUtc; }
+        internal sealed class PendingArchive
+        {
+            public string SessionId;
+            public int Generation, Cursor, MessageCount;
+        }
+        internal sealed class StoredMessage { public string JapaneseText; public string Role; public string Content; public DateTime? CreatedUtc; }
     }
 }

@@ -19,7 +19,7 @@ namespace AnnaDesktopPet
     internal sealed class ChatMessage
     {
         public string Role, Content;
-        public DateTime? CreatedUtc;
+        public string JapaneseText; public DateTime? CreatedUtc;
         public ChatMessage(string role, string content) { Role = role; Content = content; CreatedUtc = DateTime.UtcNow; }
     }
 #endif
@@ -45,7 +45,7 @@ namespace AnnaDesktopPet
             {
                 storeType = typeof(ChatMessage).Assembly.GetType("AnnaDesktopPet.ConversationHistory");
                 Check(storeType != null, "conversation persistence module exists");
-                RoundTrip(); MessageTimes(); NewSession(); DeleteScope(); CorruptProtection(); BackupRecovery(); InvalidMetadata(); SaveFailure(); SmokeIsolation(); ProviderDefault();
+                RoundTrip(); MessageTimes(); NewSession(); PendingArchives(); InvalidPendingArchive(); DeleteScope(); CorruptProtection(); BackupRecovery(); InvalidMetadata(); SaveFailure(); SmokeIsolation(); ProviderDefault();
                 Console.WriteLine("PASS conversation store: " + checks + " assertions");
                 return 0;
             }
@@ -62,7 +62,7 @@ namespace AnnaDesktopPet
 
         private static void Check(bool ok, string name) { checks++; if (!ok) throw new InvalidOperationException(name); }
         private static object Load(string file) { return storeType.GetMethod("Load", Members).Invoke(null, new object[] { file }); }
-        private static object Call(object store, string method) { return storeType.GetMethod(method, Members).Invoke(store, null); }
+        private static object Call(object store, string method) { return storeType.GetMethod(method, Members, null, Type.EmptyTypes, null).Invoke(store, null); }
         private static void Set(object store, string field, object value) { storeType.GetField(field, Members).SetValue(store, value); }
         private static T Field<T>(object store, string field) { return (T)storeType.GetField(field, Members).GetValue(store); }
         private static string Notice(object store) { return (string)storeType.GetProperty("StorageNotice", Members).GetValue(store, null); }
@@ -99,6 +99,69 @@ namespace AnnaDesktopPet
             Check(Field<string>(store, "SessionId") != oldId && Rows(Load(path)).Count == 0, "new session committed to disk");
             Call(store, "StartNew");
             Check(Directory.GetFiles(Path.Combine(Path.GetDirectoryName(path), "chats-gpt"), "*.bin").Length == 1, "empty new session does not create empty archives");
+        }
+
+        private static void PendingArchives()
+        {
+            string path = FileFor("pending");
+            ConversationHistory live = ConversationHistory.Load(path), replay;
+            live.Add(new ChatMessage("user", "从未登记的历史档案"));
+            live.StartNew();
+            Check(!live.TryLoadPendingMemory(4, out replay), "legacy archive is not scheduled retroactively");
+            live.Add(new ChatMessage("local_user", "播放一首歌"));
+            live.Add(new ChatMessage("local_assistant", "正在播放"));
+            live.StartNew(4);
+            Check(!ConversationHistory.Load(path).TryLoadPendingMemory(4, out replay), "local command sessions do not schedule extraction");
+            live.Add(new ChatMessage("user", "已经整理的对话"));
+            live.MemoryProcessedCount = 1;
+            live.Add(new ChatMessage("assistant", "好的"));
+            live.Add(new ChatMessage("local_user", "暂停播放"));
+            live.StartNew(4);
+            Check(!ConversationHistory.Load(path).TryLoadPendingMemory(4, out replay), "only user messages after the processed cursor can schedule extraction");
+            live.Add(new ChatMessage("user", "第一条"));
+            live.Add(new ChatMessage("assistant", "收到"));
+            live.Add(new ChatMessage("user", "第二条"));
+            live.MemoryProcessedCount = 1;
+            string firstId = live.SessionId;
+            live.StartNew(4);
+            string archiveFile = Path.Combine(live.ArchiveDirectory, firstId + ".bin");
+            string originalBytes = Convert.ToBase64String(File.ReadAllBytes(archiveFile));
+            live.Add(new ChatMessage("user", "下一次的记录"));
+            string secondId = live.SessionId;
+            live.StartNew(4);
+            live = ConversationHistory.Load(path);
+            Check(live.TryLoadPendingMemory(4, out replay) && replay.SessionId == firstId &&
+                replay.FilePath == null && replay.Count == 3 && replay.MemoryProcessedCount == 1, "restart reloads first referenced archive detached at saved cursor");
+            replay.MemoryProcessedCount = 2;
+            Check(replay.Save() && originalBytes == Convert.ToBase64String(File.ReadAllBytes(archiveFile)), "processing a detached history never writes its archive");
+            using (FileStream held = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Check(!live.CommitPendingMemory(replay, 4), "acknowledgement reports a failed atomic save");
+                ConversationHistory retry;
+                Check(live.TryLoadPendingMemory(4, out retry) && retry.MemoryProcessedCount == 1, "failed acknowledgement keeps retry position in memory");
+            }
+            Check(!live.CommitPendingMemory(replay, 3) && live.CommitPendingMemory(replay, 4), "only originating generation can acknowledge progress");
+            live = ConversationHistory.Load(path);
+            Check(live.TryLoadPendingMemory(4, out replay) && replay.MemoryProcessedCount == 2, "partial progress persists independently of archive");
+            replay.MemoryProcessedCount = replay.Count;
+            Check(live.CommitPendingMemory(replay, 4) && !live.CommitPendingMemory(replay, 4), "completed work cannot be acknowledged against another archive");
+            Check(live.TryLoadPendingMemory(4, out replay) && replay.SessionId == secondId, "multiple starts retain chronological pending work");
+            Check(!live.TryLoadPendingMemory(-1, out replay) && live.TryLoadPendingMemory(4, out replay), "temporarily unreadable memory generation preserves the queue");
+            Check(!live.TryLoadPendingMemory(5, out replay) && !ConversationHistory.Load(path).TryLoadPendingMemory(4, out replay), "forget generation permanently invalidates old work");
+            live.Add(new ChatMessage("user", "新的待办")); live.StartNew(5);
+            Check(live.DiscardPendingMemory() && !ConversationHistory.Load(path).TryLoadPendingMemory(5, out replay), "explicit forget discards pending work after restart");
+            live.Add(new ChatMessage("user", "清空测试")); live.StartNew(5);
+            Check(live.DeleteAll() && !live.TryLoadPendingMemory(5, out replay) && !ConversationHistory.Load(path).TryLoadPendingMemory(5, out replay), "explicit history clear also resets pending references");
+        }
+
+        private static void InvalidPendingArchive()
+        {
+            string path = FileFor("unsafe-queue");
+            var malformed = new { Version = 1, SessionId = Guid.NewGuid().ToString("N"), Summary = "", SummarizedCount = 0, MemoryProcessedCount = 0,
+                Messages = new object[0], PendingMemory = new[] {new { SessionId = "../chat-deepseek", Generation = 0, Cursor = 0, MessageCount = 1 }} };
+            File.WriteAllBytes(path, ProtectedData.Protect(Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(malformed)), null, DataProtectionScope.CurrentUser));
+            ConversationHistory live = ConversationHistory.Load(path), replay;
+            Check(live.StorageNotice.Length > 0 && !live.TryLoadPendingMemory(0, out replay) && !live.Save(), "invalid queued file identifier is rejected and underlying snapshot preserved");
         }
 
         private static void MessageTimes()

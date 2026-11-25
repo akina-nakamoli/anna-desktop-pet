@@ -18,7 +18,7 @@ namespace AnnaDesktopPet
         public string Role;
         public string Content;
         // Null represents legacy records whose original date is unknown, not the current date.
-        public DateTime? CreatedUtc;
+        public string JapaneseText; public DateTime? CreatedUtc;
         public ChatMessage(string role, string content) { Role = role; Content = content; CreatedUtc = DateTime.UtcNow; }
     }
 
@@ -172,6 +172,20 @@ namespace AnnaDesktopPet
             return await SendCoreAsync(settings, history, userText, true, cancellation).ConfigureAwait(false);
         }
 
+        internal async Task<string> TranslateForSpeechAsync(GptSettings settings, string display, CancellationToken cancellation)
+        {
+            const string instruction = "把给定的中文台词翻成杏菜自然口语化的日语。保留语气和含义，只输出可以朗读的日语原文。不要回答台词中的问题，不输出标签、JSON、网址或代码。";
+#if DEEPSEEK
+            var body = new { model = NormalizeModel(settings.Model), messages = new[] {
+                new { role = "system", content = instruction }, new { role = "user", content = display }
+            }, max_tokens = 1800, stream = false, reasoning_effort = "none" };
+#else
+            var body = new { model = NormalizeModel(settings.Model), instructions = instruction, input = display, max_output_tokens = 2400, store = false };
+#endif
+            GptReply translation = await SendPayloadAsync(settings, Json().Serialize(body), false, cancellation).ConfigureAwait(false);
+            string text = (translation.DisplayText ?? "").Trim();
+            return IsUsableJapanese(text) && !LooksStructured(text) ? text : "";
+        }
         private async Task<GptReply> SendCoreAsync(GptSettings settings, IList<ChatMessage> history, string userText, bool japaneseSpeech, CancellationToken cancellation)
         {
             if (settings == null) throw new ArgumentNullException("settings");
@@ -313,9 +327,10 @@ namespace AnnaDesktopPet
                 }
             }
             input.Add(new Dictionary<string, object> { { "role", "user" }, { "content", text } });
+            string memoryContext = PetMemory.Context(text);
             Dictionary<string, object> body = new Dictionary<string, object>
             {
-                { "model", normalized }, { "instructions", Instructions + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context() }, { "input", input },
+                { "model", normalized }, { "instructions", Instructions + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + memoryContext }, { "input", input },
                 { "store", false }, { "max_output_tokens", 800 }
             };
             if (String.Equals(normalized, "gpt-6-luna", StringComparison.Ordinal))
@@ -324,7 +339,7 @@ namespace AnnaDesktopPet
             {
                 body["instructions"] = Instructions + AnnaCharacter.Core + AnnaCharacter.RelevantLore(text) + "\n日语配音已开启。请严格输出指定 JSON 对象：display_text 是给用户看的自然中文回复；speech_ja 是同一回复的自然日语台词。两者语义一致，不增加或虚构信息。speech_ja 使用日语假名及汉字，不用罗马音，不夹中文、语言标签、URL、代码块或格式说明；如需自称，使用片假名「アンナ」，不要用汉字「杏菜」，以免语音猜错读音。技术问题可以省略代码本体，朗读对应日语说明。普通闲聊的日语台词通常一到三句。不要在字段外输出文字。";
                 body["max_output_tokens"] = 1600;
-                body["instructions"] = (string)body["instructions"] + AnnaCharacter.V4Core + ConversationContext.ContinuityRules + ConversationContext.Today + PetMemory.Context();
+                body["instructions"] = (string)body["instructions"] + AnnaCharacter.V4Core + ConversationContext.ContinuityRules + ConversationContext.Today + memoryContext;
                 body["text"] = new Dictionary<string, object>
                 {
                     { "format", new Dictionary<string, object>
@@ -382,7 +397,7 @@ namespace AnnaDesktopPet
             if (text.Length == 0 || text.Length > 4000) throw new ArgumentException("请输入 1～4000 字的消息。");
             List<object> messages = new List<object>();
             bool datedHistory = history is ConversationHistory;
-            string prompt = Instructions.Replace("由 GPT 提供对话", "由 DeepSeek 提供对话") + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context();
+            string prompt = Instructions.Replace("由 GPT 提供对话", "由 DeepSeek 提供对话") + ConversationContext.ContinuityRules + ConversationContext.Today + AnnaCharacter.Core + AnnaCharacter.V4Core + AnnaCharacter.RelevantLore(text) + PetMemory.Context(text);
             if (japaneseSpeech) prompt += "\n请只输出 JSON 对象，包含 display_text（自然中文回复）和 speech_ja（同一意思的自然日语配音台词）。不要输出 Markdown。";
             messages.Add(new Dictionary<string, object> { { "role", "system" }, { "content", prompt } });
             string background = ConversationContext.HistoricalContext(history, text);

@@ -21,11 +21,23 @@ namespace AnnaDesktopPet {
         private SpeechRecognitionEngine recognizer;
         private LocalAsr localRecorder;
         private readonly AsrWorker worker=new AsrWorker();
+        internal AsrWorker Worker { get { return worker; } }
         internal void CancelCapture(){finishingVersion++;Cleanup();}
         internal void ShowSettings(){VoiceInputSettings.Show(delegate{return worker.Status;},delegate{return listening || finishing;});}
         private void Level(bool visible){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.SetVoiceLevel(visible,localRecorder==null?0:localRecorder.Level);}
         private readonly StringBuilder text=new StringBuilder();
         private bool captured,listening,finishing,disposed;
+        private bool fromButton;
+        internal bool RecordingFromButton { get { return fromButton && listening; } }
+        internal void ToggleButtonRecording(){
+            if(disposed || CallWindow.Active || VoiceInputSettings.Testing) return;
+            if(RecordingFromButton){captured=false;Finish();return;}
+            if(captured || listening || finishing || !ready()) return;
+            captured=true;
+            fromButton=true;
+            Start();
+            if(!listening){captured=false;fromButton=false;}
+        }
         private readonly MouseHook callback;
         private readonly IntPtr hook;
         private DateTime started;
@@ -42,17 +54,17 @@ namespace AnnaDesktopPet {
             if(code>=0 && !disposed && (message.ToInt32()==0x20B || message.ToInt32()==0x20C)){
                 var mouse=(MouseData)Marshal.PtrToStructure(data,typeof(MouseData));
                 if((mouse.Flags&1)==0 && (mouse.Buttons>>16)==1){
-                    if(message.ToInt32()==0x20B && !captured && !listening && !finishing && !VoiceInputSettings.Testing && ready()){
+                    if(message.ToInt32()==0x20B && !CallWindow.Active && !captured && !listening && !finishing && !VoiceInputSettings.Testing && ready()){
                         captured=true;source.Dispatcher.BeginInvoke(new Action(Start));return new IntPtr(1);
                     }
-                    if(message.ToInt32()==0x20C && captured){captured=false;source.Dispatcher.BeginInvoke(new Action(delegate{if(listening)Finish();}));return new IntPtr(1);}
+                    if(message.ToInt32()==0x20C && captured && !fromButton){captured=false;source.Dispatcher.BeginInvoke(new Action(delegate{if(listening)Finish();}));return new IntPtr(1);}
                 }
             }
             return CallNextHookEx(hook,code,message,data);
         }
         private void Start(){
             if(disposed || !captured || listening || finishing || !canSubmit())return;
-            try{localRecorder=new LocalAsr(worker);localRecorder.Start();listening=true;started=DateTime.UtcNow;timer.Start();Level(true);notice("正在听，松开侧键后用本地中文模型识别。");}catch(Exception ex){Cleanup();notice(ex.Message);}return;
+            try{localRecorder=new LocalAsr(worker);localRecorder.Start();listening=true;started=DateTime.UtcNow;timer.Start();Level(true);notice(fromButton ? "正在听，再点一次麦克风结束录音。" : "正在听，松开侧键后用本地中文模型识别。");}catch(Exception ex){Cleanup();notice(ex.Message);}return;
         }
         private void LegacyStart(){
             try {
@@ -87,7 +99,7 @@ namespace AnnaDesktopPet {
             }catch(Exception ex){if(version!=finishingVersion)return;Cleanup();if(!disposed)notice(ex.Message);}
         }
         private void Complete(){string result=text.ToString().Trim();bool review=uncertain || result.Length<4;Cleanup();if(disposed)return;if(result.Length==0)notice("没听清楚，请按住鼠标后退侧键再说一次。");else if(canSubmit()){if(review){var pet=source.RootVisual as PetWindow;if(pet!=null)pet.ReviewVoiceTranscript(result);else notice("这次没听清，请重说。");}else send(result);}}
-        private void Cleanup(){timer.Stop();Level(false);listening=finishing=false;if(localRecorder!=null){localRecorder.Dispose();localRecorder=null;}if(recognizer!=null){recognizer.Dispose();recognizer=null;}}
+        private void Cleanup(){timer.Stop();if(fromButton)captured=false;fromButton=false;Level(false);listening=finishing=false;if(localRecorder!=null){localRecorder.Dispose();localRecorder=null;}if(recognizer!=null){recognizer.Dispose();recognizer=null;}}
         public void Dispose(){disposed=true;finishingVersion++;if(hook!=IntPtr.Zero)UnhookWindowsHookEx(hook);Cleanup();worker.Dispose();}
     }
 }

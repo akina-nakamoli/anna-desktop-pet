@@ -1,6 +1,6 @@
-param(
+﻿param(
     [string]$Output = (Join-Path (Split-Path $PSScriptRoot -Parent) 'releases'),
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.41.4',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '1.42.0',
     [switch]$SkipBuild,
     [switch]$ReplaceExisting
 )

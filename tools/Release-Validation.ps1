@@ -29,22 +29,29 @@ function Remove-ReleaseDirectory([string]$Repo, [string]$Path) {
 
 function Get-ReleaseAssetMap([string]$Repo) {
     $map = [ordered]@{}
-    foreach ($name in @('pet.png','poses.png','chat-background.png','dressing-room.png','animation-blink.png','animation-speak.png','animation-wave.png','animation-happy.png')) {
+    foreach ($name in @('pet.png','chat-background.png','dressing-room.png')) {
         $source = Join-Path $Repo ('source\assets\' + $name)
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Required artwork missing: $source" }
         $map['assets/' + $name] = $source
     }
     $map['reference/anna.wav'] = Join-Path $Repo 'reference\anna.wav'
     $map['杏菜Q版头像.ico'] = Join-Path $Repo '杏菜Q版头像.ico'
-    foreach ($outfit in @('校服1','校服2','幽灵服')) {
+    foreach ($outfit in @('校服2立绘','幽灵娘立绘','海獭服杏菜')) {
         $folder = Join-Path $Repo ('outfits\' + $outfit)
-        foreach ($required in @('pet.png','poses.png')) {
+        foreach ($required in @('pet.png','Live2D/Anna.model3.json')) {
             if (-not (Test-Path -LiteralPath (Join-Path $folder $required) -PathType Leaf)) { throw "Incomplete outfit: $outfit/$required" }
         }
         foreach ($file in Get-ChildItem -LiteralPath $folder -Recurse -File) {
             $relative = $file.FullName.Substring($folder.Length).TrimStart('\','/').Replace('\','/')
             $map['outfits/' + $outfit + '/' + $relative] = $file.FullName
         }
+    }
+    $map["杏菜Q版头像.png"] = Join-Path $Repo "杏菜Q版头像.png"
+    foreach ($key in "PurismCore.dll","PurismCore.LICENSE.txt") { $map[$key] = Join-Path $Repo ("source/live2d-runtime/" + $key) }
+    $modelRoot = Join-Path $Repo "source/assets/live2d"
+    foreach ($file in Get-ChildItem $modelRoot -Recurse -File) {
+        if ($file.Name -eq "Anna-front.model3.json") { continue }
+        $map["Live2D/" + $file.FullName.Substring($modelRoot.Length+1).Replace("\","/")] = $file.FullName
     }
     foreach ($source in $map.Values) {
         if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item -LiteralPath $source).Length -eq 0) { throw "Missing or empty release asset: $source" }
@@ -54,6 +61,7 @@ function Get-ReleaseAssetMap([string]$Repo) {
 
 function Assert-NoPrivateReleaseFile([string]$Relative) {
     if ($Relative -cmatch '^ja-tts/pyopenjtalk/dictionary/(char|matrix)\.bin$') { return }
+    if ($Relative -match '(^|/)novel\.tsv$') { throw "Private novel index in release" }
     if ($Relative -match '(^|/)(logs|models|\.git)(/|$)|(^|/)(engine-path|python-path|qqmusic-path|asr-engine-path)\.txt$|(^|/)engine-process\.json$|(^|/)([^/]*key[^/]*|[^/]*settings[^/]*|memory[^/]*|chat-history[^/]*|conversation[^/]*|appearance|favorites|routine)\.(json|ini|txt|dat|bin)$|\.(log|key|tmp|bin|dat)$') {
         throw "Private runtime file in release: $Relative"
     }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -19,6 +19,25 @@ namespace AnnaDesktopPet
         public string Language;
     }
 
+    // Sample the media clock once per displayed frame, including short pauses inside a phrase.
+    internal struct PortraitPlayback
+    {
+        internal readonly bool Busy, Audible;
+        internal readonly double Mouth;
+        internal PortraitPlayback(bool busy, bool audible, double mouth)
+        { Busy=busy; Audible=audible; Mouth=audible ? mouth : 0; }
+
+        internal static PortraitPlayback FromWave(bool busy, bool playing, long positionTicks,
+            long firstAudibleTicks, float[] levels, long endAudibleTicks = long.MaxValue)
+        {
+            bool audible = playing && positionTicks > 0 && firstAudibleTicks >= 0 &&
+                positionTicks >= firstAudibleTicks && positionTicks < endAudibleTicks;
+            int window = (int)(positionTicks/(TimeSpan.TicksPerSecond/50));
+            double mouth = levels != null && window >= 0 && window < levels.Length ? levels[window] : 0;
+            return new PortraitPlayback(busy,audible,mouth);
+        }
+    }
+
     // Japanese speech through explicitly selected Windows SAPI or loopback GPT-SoVITS.
     internal sealed class SpeechService : IDisposable
     {
@@ -36,16 +55,127 @@ namespace AnnaDesktopPet
         private CancellationTokenSource cloneCancellation;
         private long cloneSequence;
         private MediaPlayer clonePlayer;
+        private float[] mouthLevels;
+        private long firstVoiceTicks = -1, endVoiceTicks;
+        private const int MouthWindowsPerSecond = 50;
+        internal PortraitPlayback Playback
+        {
+            get
+            {
+                if (volume == 0 || testWaveFile != null) return new PortraitPlayback(false,false,0);
+                if (!IsSpeaking || clonePlayer == null) return new PortraitPlayback(IsBusy,false,0);
+                return PortraitPlayback.FromWave(IsBusy,true,clonePlayer.Position.Ticks,firstVoiceTicks,mouthLevels,endVoiceTicks);
+            }
+        }
+        internal double MouthOpen { get { return Playback.Mouth; } }
+
+        internal static float[] ReadMouthLevels(byte[] wave)
+        {
+            return MouthLevelsAtVolume(wave, 100);
+        }
+
+        // The player and lip sync use the same PCM clip and output gain.
+        internal static float[] MouthLevelsAtVolume(byte[] wave, int playbackVolume)
+        {
+            long firstAudibleTicks;
+            return MouthLevelsAtVolume(wave,playbackVolume,out firstAudibleTicks);
+        }
+
+        internal static float[] MouthLevelsAtVolume(byte[] wave, int playbackVolume, out long firstAudibleTicks)
+        {
+            long endAudibleTicks;
+            return MouthLevelsAtVolume(wave,playbackVolume,out firstAudibleTicks,out endAudibleTicks);
+        }
+
+        internal static float[] MouthLevelsAtVolume(byte[] wave, int playbackVolume, out long firstAudibleTicks, out long endAudibleTicks)
+        {
+            firstAudibleTicks = -1; endAudibleTicks = 0;
+            double gain = Math.Max(0, Math.Min(100, playbackVolume)) / 100.0;
+            if (wave == null) return null;
+            try
+            {
+                using (var reader = new BinaryReader(new MemoryStream(wave, false)))
+                {
+                    if (reader.ReadUInt32() != 0x46464952) return null;
+                    reader.ReadUInt32();
+                    if (reader.ReadUInt32() != 0x45564157) return null;
+                    int channels = 0, rate = 0;
+                    var stream = reader.BaseStream;
+                    while (stream.Position + 8 <= stream.Length)
+                    {
+                        uint chunk = reader.ReadUInt32(), size = reader.ReadUInt32();
+                        long end = stream.Position + size;
+                        if (end > stream.Length) return null;
+                        if (chunk == 0x20746d66 && size >= 16)
+                        {
+                            if (reader.ReadUInt16() != 1) return null;
+                            channels = reader.ReadUInt16(); rate = reader.ReadInt32();
+                            reader.ReadUInt32(); reader.ReadUInt16();
+                            if (reader.ReadUInt16() != 16 || channels < 1 || channels > 8 || rate < 8000 || rate > 192000) return null;
+                        }
+                        if (chunk == 0x61746164 && rate > 0)
+                        {
+                            int sampleCount = checked((int)(size / 2));
+                            int dataStart = (int)stream.Position;
+                            int frameCount = sampleCount / channels;
+                            float[] result = new float[(int)Math.Ceiling(frameCount * (double)MouthWindowsPerSecond / rate)];
+                            double envelope = 0;
+                            int firstSound = -1, lastSound = -1;
+                            float mouth = 0;
+                            for (int i = 0; i < result.Length; i++)
+                            {
+                                int first = (int)((long)i * rate / MouthWindowsPerSecond) * channels;
+                                int last = Math.Min(frameCount, (int)((long)(i + 1) * rate / MouthWindowsPerSecond)) * channels;
+                                double energy = 0;
+                                for (int j = first; j < last; j++)
+                                {
+                                    double sample = BitConverter.ToInt16(wave, dataStart + j * 2) / 32768.0;
+                                    energy += sample * sample;
+                                    if (Math.Abs(sample)*gain >= .003)
+                                    {
+                                        if (firstSound < 0) firstSound = j;
+                                        lastSound = j;
+                                    }
+                                }
+                                double rms = gain * Math.Sqrt(energy / Math.Max(1, last - first));
+                                if (rms <= .008)
+                                {
+                                    // One silent 20 ms window closes the mouth, even after a loud syllable.
+                                    envelope = 0;
+                                    mouth = 0;
+                                }
+                                else
+                                {
+                                    envelope += (rms - envelope) * (rms > envelope ? .70 : .40);
+                                    // Separate entry and exit thresholds prevent chatter around syllable boundaries.
+                                    if (envelope >= (mouth == 1 ? .044 : .057)) mouth = 1;
+                                    else if (envelope >= (mouth > 0 ? .014 : .021)) mouth = .5f;
+                                    else mouth = 0;
+                                }
+                                result[i] = mouth;
+                            }
+                            if (firstSound >= 0)
+                            {
+                                firstAudibleTicks = (firstSound/channels)*TimeSpan.TicksPerSecond/rate;
+                                endAudibleTicks = (lastSound/channels+1L)*TimeSpan.TicksPerSecond/rate;
+                            }
+                            return result;
+                        }
+                        stream.Position = end + (size & 1);
+                    }
+                }
+            }
+            catch (IOException) { }
+            return null;
+        }
         private DispatcherTimer playbackWatchdog;
         private string cloneWaveFile;
         private SpeechStreamQueue streamQueue;
         private TaskCompletionSource<bool> streamPromptCompletion;
         private int streamCharacters;
         private bool streamShortened;
-        private bool UsingClone { get { return engine == "gpt-sovits"; } }
-
         private bool UsingPortable { get { return engine == "portable"; } }
-        private bool UsingWave { get { return UsingClone || UsingPortable; } }
+        private bool UsingClone { get { return engine == "gpt-sovits" || UsingPortable; } }
 
         public event Action<bool> SpeakingChanged;
         public event Action<string> StatusChanged;
@@ -63,12 +193,12 @@ namespace AnnaDesktopPet
         }
 
         public IList<SpeechVoiceInfo> Voices { get { EnsureInitialized(); return voices.AsReadOnly(); } }
-        public bool Available { get { if (!UsingWave) EnsureInitialized(); return (UsingPortable ? PortableJapaneseVoice.Available : UsingClone ? cloneConfigured : available) && !disposed; } }
+        public bool Available { get { if (!UsingClone) EnsureInitialized(); return (UsingClone ? cloneConfigured : available) && !disposed; } }
         public bool IsSpeaking { get { return speaking && !disposed; } }
         public bool IsBusy { get { return !disposed && (speaking || activePrompt != null || clonePending || streamQueue != null); } }
         internal long OperationId { get { return cloneSequence; } }
         public string SelectedVoiceId { get { EnsureInitialized(); return selectedVoiceId; } }
-        public string Status { get { if (!UsingWave) EnsureInitialized(); return status; } }
+        public string Status { get { if (!UsingClone) EnsureInitialized(); return status; } }
 
         private void EnsureInitialized()
         {
@@ -102,11 +232,11 @@ namespace AnnaDesktopPet
                 selectedVoiceId = best.VoiceInfo.Id; defaultVoiceId = selectedVoiceId;
                 synthesizer.Rate = rate; synthesizer.Volume = volume;
                 if (testWaveFile != null) synthesizer.SetOutputToWaveFile(testWaveFile);
-                else synthesizer.SetOutputToDefaultAudioDevice();
+                else synthesizer.SetOutputToNull();
                 synthesizer.SpeakStarted += OnSpeakStarted;
                 synthesizer.SpeakCompleted += OnSpeakCompleted;
                 available = true;
-                if (!UsingWave) SetStatus(ReadyStatus());
+                if (!UsingClone) SetStatus(ReadyStatus());
             }
             catch
             {
@@ -117,7 +247,7 @@ namespace AnnaDesktopPet
 
         private string ReadyStatus()
         {
-            if (UsingPortable) return PortableJapaneseVoice.Available ? "离线日语声线已就绪。" : "离线日语组件缺失，请完整解压新版 ZIP。";
+            if (UsingPortable) return PortableJapaneseVoice.Available ? "离线日语声线已就绪。" : "缺少离线日语组件。";
             if (UsingClone) return cloneConnected ? "本地参考音色已连接，可继续日语配音。" : "参考音色配置已就绪，点击试听连接本地 GPT-SoVITS；尚未验证服务。";
             SpeechVoiceInfo voice = voices.Find(delegate(SpeechVoiceInfo item) { return item.Id == selectedVoiceId; });
             return voice == null ? "本机日语配音已就绪。" : "本机日语配音已就绪：" + voice.Name + "（" + voice.Language + "）";
@@ -134,10 +264,10 @@ namespace AnnaDesktopPet
                 if (speechEngine != "gpt-sovits" && speechEngine != "windows" && speechEngine != "portable") { SetStatus("无法识别配音方式，请在设置中重新选择。"); return; }
                 if (UsingClone)
                 {
+                    if (UsingPortable) { cloneConfigured = PortableJapaneseVoice.Available; SetStatus(ReadyStatus()); return; }
                     try { GptSovitsClient.ValidateConfiguration(cloneEndpoint, cloneReferenceAudio, cloneReferenceText); cloneConfigured = true; SetStatus(ReadyStatus()); }
                     catch (Exception error) { SetStatus(error.Message); }
                 }
-                else if (UsingPortable) SetStatus(ReadyStatus());
                 else
                 {
                     EnsureInitialized();
@@ -152,7 +282,7 @@ namespace AnnaDesktopPet
             {
                 rate = Math.Max(-5, Math.Min(5, speechRate));
                 volume = Math.Max(0, Math.Min(100, speechVolume));
-                if (UsingWave) { StopCore(false); if (UsingPortable || cloneConfigured) SetStatus(ReadyStatus()); return; }
+                if (UsingClone) { StopCore(false); if (cloneConfigured) SetStatus(ReadyStatus()); return; }
                 EnsureInitialized();
                 if (!available || synthesizer == null) return;
                 StopCore(false);
@@ -177,20 +307,21 @@ namespace AnnaDesktopPet
         {
             Dispatch(delegate
             {
-                if (UsingWave)
+                if (UsingClone)
                 {
-                    if (!Available) { SetStatus(UsingPortable ? ReadyStatus() : "参考音色配置尚未完成，请检查本地服务地址、WAV 样音与日语台词。"); return; }
+                    if (!cloneConfigured) { SetStatus("参考音色配置尚未完成，请检查本地服务地址、WAV 样音与日语台词。"); return; }
                     bool shortened; string japanese = PrepareText(text, out shortened);
                     if (japanese.Length == 0) { SetStatus("没有可朗读的文字。"); return; }
-                    StartClone(japanese, shortened); return;
+                    StartWaveSpeech(japanese, shortened); return;
                 }
                 EnsureInitialized();
                 if (!available || synthesizer == null) return;
                 bool truncated;
                 string clean = PrepareText(text, out truncated);
                 if (clean.Length == 0) { SetStatus("没有可朗读的文字。"); return; }
+                if (testWaveFile == null) { StartWaveSpeech(clean, truncated); return; }
                 StopCore(false);
-                Prompt prompt = new Prompt(clean);
+                Prompt prompt = new Prompt(VoicePerformance.StripCue(clean));
                 activePrompt = prompt;
                 try
                 {
@@ -213,42 +344,39 @@ namespace AnnaDesktopPet
             Dispatch(delegate
             {
                 StopCore(false);
-                if (UsingWave)
+                if (UsingClone)
                 {
-                    if (!Available) { SetStatus(UsingPortable ? ReadyStatus() : "参考音色配置尚未完成，请检查本地服务地址、WAV 样音与日语台词。"); return; }
+                    if (!cloneConfigured) { SetStatus("参考音色配置尚未完成，请检查本地服务地址、WAV 样音与日语台词。"); return; }
                 }
                 else { EnsureInitialized(); if (!available || synthesizer == null) return; }
                 long sequence = cloneSequence;
-                bool waveBackend = UsingWave, portable = UsingPortable;
-                string endpoint = cloneEndpoint, referenceAudio = cloneReferenceAudio, referenceText = cloneReferenceText;
-                int speechRate = rate;
+                bool localClone = UsingClone;
+                var generate = CreateWaveGenerator();
+                int playbackVolume = volume;
                 streamCharacters = 0; streamShortened = false;
                 SpeechStreamQueue queue = null;
-                queue = new SpeechStreamQueue(
-                    delegate(string sentence, CancellationToken token)
+                Action<Exception> finished = delegate(Exception error)
+                {
+                    Dispatch(delegate
                     {
-                        return waveBackend
-                            ? PlayStreamCloneAsync(sequence, portable, endpoint, referenceAudio, referenceText, speechRate, sentence, token)
-                            : PlayStreamWindowsAsync(sequence, sentence, token);
-                    },
-                    delegate(Exception error)
-                    {
-                        Dispatch(delegate
+                        if (sequence != cloneSequence || !Object.ReferenceEquals(streamQueue, queue)) return;
+                        streamQueue = null; clonePending = false; SetSpeaking(false);
+                        if (error != null)
                         {
-                            if (sequence != cloneSequence || !Object.ReferenceEquals(streamQueue, queue)) return;
-                            streamQueue = null; clonePending = false; SetSpeaking(false);
-                            if (error != null)
-                            {
-                                if (waveBackend && !portable) cloneConnected = false;
-                                SetStatus(error is InvalidOperationException ? error.Message : "分句配音未能完成，请检查音色服务或音频设备。");
-                            }
-                            else
-                            {
-                                if (waveBackend && !portable && streamCharacters > 0) cloneConnected = true;
-                                SetStatus(streamShortened ? "本次已配音前 1500 字；完整内容请看聊天窗口。" : testWaveFile != null && streamCharacters > 0 ? "分句配音已生成到测试文件，未播放。" : ReadyStatus());
-                            }
-                        });
+                            if (localClone) cloneConnected = false;
+                            SetStatus(error is InvalidOperationException ? error.Message : "分句配音未能完成，请检查音色服务或音频设备。");
+                        }
+                        else
+                        {
+                            if (localClone && streamCharacters > 0) cloneConnected = true;
+                            SetStatus(streamShortened ? "本次已配音前 1500 字；完整内容请看聊天窗口。" : testWaveFile != null && streamCharacters > 0 ? "分句配音已生成到测试文件，未播放。" : ReadyStatus());
+                        }
                     });
+                };
+                if (!localClone && testWaveFile != null)
+                    queue = new SpeechStreamQueue((sentence, token) => PlayStreamWindowsAsync(sequence, sentence, token), finished);
+                else
+                    queue = new SpeechStreamQueue(generate, (wave, token) => PlayWave(sequence, wave, playbackVolume, token), finished);
                 streamQueue = queue;
                 SetStatus("等待日语句子，生成一句就开始配音。");
             });
@@ -271,12 +399,20 @@ namespace AnnaDesktopPet
                     clean = clean.Substring(0, take).TrimEnd(); shortened = true;
                 }
                 if (clean.Length == 0) return;
-                if (streamQueue.Append(clean))
+                if (!UsingClone && testWaveFile != null)
                 {
-                    streamCharacters += clean.Length; streamShortened |= shortened;
-                    if (UsingWave) clonePending = true;
-                    if (!speaking) SetStatus(UsingClone ? "正在生成这一句日语参考音色……" : "正在准备这一句日语配音……");
+                    if (!streamQueue.Append(clean)) return;
                 }
+                else
+                {
+                    IList<string> chunks = SplitSpeech(clean);
+                    if (chunks.Count == 0) return;
+                    foreach (string chunk in chunks)
+                        if (!streamQueue.Append(chunk)) return;
+                }
+                streamCharacters += clean.Length; streamShortened |= shortened;
+                if (UsingClone) clonePending = true;
+                if (!speaking) SetStatus(UsingClone ? "正在生成这一句日语参考音色……" : "正在准备这一句日语配音……");
             });
         }
 
@@ -302,26 +438,81 @@ namespace AnnaDesktopPet
                 try { synthesizer.SpeakAsyncCancelAll(); } catch { }
             }
             SetSpeaking(false);
-            if (showStatus && (UsingPortable ? PortableJapaneseVoice.Available : UsingClone ? cloneConfigured : available)) SetStatus("已停止配音与等待中的音色请求。");
+            if (showStatus && (UsingClone ? cloneConfigured : available)) SetStatus("已停止配音与等待中的音色请求。");
         }
 
-        private async Task PlayStreamCloneAsync(long sequence, bool portable, string endpoint, string referenceAudio, string referenceText,
-            int speechRate, string sentence, CancellationToken token)
+        private Func<string, CancellationToken, Task<byte[]>> CreateWaveGenerator()
         {
-            IList<string> chunks = SplitSpeech(sentence);
+            int speechRate = rate;
+            if (UsingClone)
+            {
+                if (UsingPortable) return (text, token) => PortableJapaneseVoice.GenerateAsync(VoicePerformance.StripCue(text), speechRate, token);
+                string endpoint = cloneEndpoint, audio = cloneReferenceAudio, prompt = cloneReferenceText;
+                return (text, token) => cloneClient.GenerateAsync(endpoint, audio, prompt, text, speechRate, token);
+            }
+            string name = synthesizer.Voice.Name;
+            return (text, token) => GenerateWindowsWave(name, speechRate, VoicePerformance.StripCue(text), token);
+        }
+
+        // SAPI renders one phrase ahead without opening an output device. This worker
+        // owns its synthesizer, so a cancelled phrase cannot change the next voice.
+        internal static Task<byte[]> GenerateWindowsWave(string name, int speechRate, string text, CancellationToken token)
+        {
+            return Task.Run(delegate
+            {
+                token.ThrowIfCancellationRequested();
+                using (var output = new MemoryStream())
+                using (var voice = new SpeechSynthesizer())
+                {
+                    voice.SelectVoice(name);
+                    voice.Rate = speechRate;
+                    voice.Volume = 100;
+                    voice.SetOutputToWaveStream(output);
+                    var done = new TaskCompletionSource<SpeakCompletedEventArgs>();
+                    voice.SpeakCompleted += delegate(object sender, SpeakCompletedEventArgs args) { done.TrySetResult(args); };
+                    voice.SpeakAsync(text);
+                    using (token.Register(voice.SpeakAsyncCancelAll)) done.Task.Wait(token);
+                    token.ThrowIfCancellationRequested();
+                    var result = done.Task.Result;
+                    if (result.Cancelled) throw new OperationCanceledException(token);
+                    if (result.Error != null) throw new InvalidOperationException("Windows 日语配音合成失败。", result.Error);
+                    voice.SetOutputToNull(); // Finalize the RIFF header before measuring the clip.
+                    return output.ToArray();
+                }
+            }, token);
+        }
+
+        private async Task PlayWaveChunks(long sequence, string text, Func<string, CancellationToken, Task<byte[]>> generate,
+            int playbackVolume, CancellationToken token)
+        {
+            IList<string> chunks = SplitSpeech(text);
+            if (chunks.Count == 0) return;
             token.ThrowIfCancellationRequested();
-            Task<byte[]> next = GenerateWaveAsync(portable, endpoint, referenceAudio, referenceText, chunks[0], speechRate, token);
+            Task<byte[]> next = generate(chunks[0], token);
             for (int i = 0; i < chunks.Count; i++)
             {
                 byte[] wave = await next.ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
-                next = i + 1 < chunks.Count ? GenerateWaveAsync(portable, endpoint, referenceAudio, referenceText, chunks[i + 1], speechRate, token) : null;
+                next = i + 1 < chunks.Count ? generate(chunks[i + 1], token) : null;
                 if (next != null) ObservePrefetchFault(next);
-                if (testWaveFile != null) { if (i == 0) File.WriteAllBytes(testWaveFile, wave); continue; }
-                string temp = Path.Combine(Path.GetTempPath(), "AnnaVoice-" + Guid.NewGuid().ToString("N") + ".wav");
-                File.WriteAllBytes(temp, wave);
-                await QueueClonePlayback(sequence, temp, token).ConfigureAwait(false);
+                if (testWaveFile == null || i == 0)
+                    await PlayWave(sequence, wave, playbackVolume, token).ConfigureAwait(false);
             }
+        }
+
+        private async Task PlayWave(long sequence, byte[] wave, int playbackVolume, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (testWaveFile != null) { File.WriteAllBytes(testWaveFile, wave); return; }
+            long firstAudibleTicks, endAudibleTicks;
+            float[] levels = MouthLevelsAtVolume(wave, playbackVolume, out firstAudibleTicks, out endAudibleTicks);
+            string temp = Path.Combine(Path.GetTempPath(), "AnnaVoice-" + Guid.NewGuid().ToString("N") + ".wav");
+            try
+            {
+                File.WriteAllBytes(temp, wave);
+                await QueueClonePlayback(sequence, temp, levels, firstAudibleTicks, endAudibleTicks, token).ConfigureAwait(false);
+            }
+            finally { DeleteWave(temp); }
         }
 
         private async Task PlayStreamWindowsAsync(long sequence, string sentence, CancellationToken token)
@@ -335,7 +526,7 @@ namespace AnnaDesktopPet
                 {
                     if (disposed || sequence != cloneSequence || token.IsCancellationRequested) { completed.TrySetCanceled(); return; }
                     if (synthesizer == null) { completed.TrySetException(new InvalidOperationException("本机日语配音不可用。")); return; }
-                    Prompt prompt = new Prompt(sentence); activePrompt = prompt; streamPromptCompletion = completed;
+                    Prompt prompt = new Prompt(VoicePerformance.StripCue(sentence)); activePrompt = prompt; streamPromptCompletion = completed;
                     try { SetStatus("正在逐句使用 Windows 本机日语配音。"); synthesizer.SpeakAsync(prompt); }
                     catch { activePrompt = null; streamPromptCompletion = null; completed.TrySetException(new InvalidOperationException("本机朗读未能开始，请检查语音组件和音频设备。")); }
                 }));
@@ -347,14 +538,11 @@ namespace AnnaDesktopPet
 
         internal Task<bool> TryReferenceSampleAsync()
         {
-            if (!UsingClone || !cloneConfigured) throw new InvalidOperationException(Status);
+            if (!UsingClone || UsingPortable || !cloneConfigured) throw new InvalidOperationException(Status);
             return PlayWaveSpeechAsync("こんにちは、アンナだよ。", false);
         }
 
-        private async void StartClone(string text, bool truncated)
-        {
-            await PlayWaveSpeechAsync(text, truncated);
-        }
+        private async void StartWaveSpeech(string text, bool truncated) { await PlayWaveSpeechAsync(text, truncated); }
 
         private async Task<bool> PlayWaveSpeechAsync(string text, bool truncated)
         {
@@ -363,47 +551,29 @@ namespace AnnaDesktopPet
             CancellationTokenSource cancellation = new CancellationTokenSource(); cloneCancellation = cancellation;
             clonePending = true;
             CancellationToken token = cancellation.Token;
-            string endpoint = cloneEndpoint, referenceAudio = cloneReferenceAudio, referenceText = cloneReferenceText;
-            int speechRate = rate;
-            bool portable = UsingPortable;
-            SetStatus(portable ? "正在生成离线日语配音……" : truncated ? "正在生成日语参考音色；本次仅配音前 1500 字。" : "正在连接本地服务，生成日语参考音色……");
+            bool localClone = UsingClone;
+            SetStatus(truncated ? "本次仅配音前 1500 字。" : localClone ? "正在连接本地服务，生成日语参考音色……" : "正在生成 Windows 本机日语配音……");
             try
             {
-                IList<string> chunks = SplitSpeech(text);
-                Task<byte[]> next = GenerateWaveAsync(portable, endpoint, referenceAudio, referenceText, chunks[0], speechRate, token);
-                for (int i = 0; i < chunks.Count; i++)
+                await PlayWaveChunks(sequence, text, CreateWaveGenerator(), volume, token).ConfigureAwait(false);
+                Dispatch(delegate
                 {
-                    byte[] wave = await next.ConfigureAwait(false);
-                    token.ThrowIfCancellationRequested();
-                    // Prefetch one segment while the previous one is playing; only one request is in flight.
-                    next = i + 1 < chunks.Count ? GenerateWaveAsync(portable, endpoint, referenceAudio, referenceText, chunks[i + 1], speechRate, token) : null;
-                    if (next != null) ObservePrefetchFault(next);
-                    if (testWaveFile != null)
-                    {
-                        if (i == 0) File.WriteAllBytes(testWaveFile, wave);
-                        continue;
-                    }
-                    string temp = Path.Combine(Path.GetTempPath(), "AnnaVoice-" + Guid.NewGuid().ToString("N") + ".wav");
-                    File.WriteAllBytes(temp, wave);
-                    await QueueClonePlayback(sequence, temp, token).ConfigureAwait(false);
-                }
-                Dispatch(delegate { if (sequence == cloneSequence && !token.IsCancellationRequested) { clonePending = false; cloneConnected = true; SetSpeaking(false); SetStatus(testWaveFile != null ? "日语配音已生成到测试文件，未播放。" : ReadyStatus()); } });
-                return !token.IsCancellationRequested;
+                    if (sequence != cloneSequence || token.IsCancellationRequested) return;
+                    clonePending = false;
+                    if (localClone) cloneConnected = true;
+                    SetSpeaking(false);
+                    SetStatus(testWaveFile != null ? "本地参考音色已生成到测试文件，未播放。" : ReadyStatus());
+                });
+                return !token.IsCancellationRequested && sequence == cloneSequence;
             }
             catch (OperationCanceledException) { return false; }
             catch (Exception error)
             {
                 try { cancellation.Cancel(); } catch (ObjectDisposedException) { }
-                string message = error is InvalidOperationException ? error.Message : portable ? "离线日语配音未能生成或播放，请检查解压目录和音频设备。" : "参考音色未能生成或播放，请检查本地服务和临时文件夹。";
+                string message = error is InvalidOperationException ? error.Message : "日语配音未能生成或播放，请检查语音服务和临时文件夹。";
                 Dispatch(delegate { if (sequence == cloneSequence) { clonePending = false; cloneConnected = false; SetSpeaking(false); SetStatus(message); } });
                 return false;
             }
-        }
-
-        private Task<byte[]> GenerateWaveAsync(bool portable, string endpoint, string audio, string reference, string text, int speechRate, CancellationToken token)
-        {
-            return portable ? PortableJapaneseVoice.GenerateAsync(text, speechRate, token) :
-                cloneClient.GenerateAsync(endpoint, audio, reference, text, speechRate, token);
         }
 
         private static void ObservePrefetchFault(Task<byte[]> pending)
@@ -414,7 +584,7 @@ namespace AnnaDesktopPet
                 CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
-        private async Task QueueClonePlayback(long sequence, string file, CancellationToken token)
+        private async Task QueueClonePlayback(long sequence, string file, float[] levels, long firstTicks, long endTicks, CancellationToken token)
         {
             TaskCompletionSource<bool> finished = new TaskCompletionSource<bool>();
             using (token.Register(delegate { finished.TrySetCanceled(); }))
@@ -425,7 +595,7 @@ namespace AnnaDesktopPet
                     DispatcherOperation pending = dispatcher.BeginInvoke(new Action(delegate
                     {
                         if (disposed || sequence != cloneSequence || token.IsCancellationRequested) { DeleteWave(file); finished.TrySetCanceled(); return; }
-                        BeginClonePlayback(sequence, file, delegate(bool success) { if (success) finished.TrySetResult(true); else finished.TrySetException(new InvalidOperationException("日语配音已生成，但播放失败，请检查音频设备。")); });
+                        BeginClonePlayback(sequence, file, levels, firstTicks, endTicks, delegate(bool success) { if (success) finished.TrySetResult(true); else finished.TrySetException(new InvalidOperationException("日语配音已生成，但播放失败，请检查音频设备。")); });
                     }));
                     pending.Aborted += delegate { DeleteWave(file); finished.TrySetCanceled(); };
                     if (pending.Status == DispatcherOperationStatus.Aborted) { DeleteWave(file); finished.TrySetCanceled(); }
@@ -435,21 +605,23 @@ namespace AnnaDesktopPet
             }
         }
 
-        private void BeginClonePlayback(long sequence, string file, Action<bool> completed)
+        private void BeginClonePlayback(long sequence, string file, float[] levels, long firstTicks, long endTicks, Action<bool> completed)
         {
-            cloneConnected = true; cloneWaveFile = file;
+            if (UsingClone) cloneConnected = true;
+            cloneWaveFile = file; mouthLevels = levels;
+            firstVoiceTicks = firstTicks; endVoiceTicks = endTicks;
             MediaPlayer player = new MediaPlayer(); clonePlayer = player; player.Volume = volume / 100.0;
             player.MediaOpened += delegate
             {
                 if (sequence != cloneSequence || clonePlayer != player) return;
-                SetSpeaking(true); SetStatus(UsingPortable ? "正在播放离线日语配音。" : "正在播放日语参考音色（AI 合成）。"); player.Play();
+                SetStatus(UsingClone ? "正在播放日语参考音色（AI 合成）。" : "正在播放 Windows 本机日语配音。"); player.Play(); SetSpeaking(true);
                 if (player.NaturalDuration.HasTimeSpan && playbackWatchdog != null)
                     playbackWatchdog.Interval = player.NaturalDuration.TimeSpan + TimeSpan.FromSeconds(5);
             };
             player.MediaEnded += delegate
             {
                 if (sequence != cloneSequence || clonePlayer != player) return;
-                ReleaseClonePlayer(); completed(true);
+                ReleaseClonePlayer(); SetSpeaking(false); completed(true);
             };
             player.MediaFailed += delegate
             {
@@ -472,9 +644,17 @@ namespace AnnaDesktopPet
         internal static IList<string> SplitSpeech(string text)
         {
             List<string> chunks = new List<string>();
-            string remaining = (text ?? "").Trim();
+            string prefix = VoicePerformance.Prefix(text);
+            string remaining = VoicePerformance.StripCue(text).Trim();
             while (remaining.Length > 0)
             {
+                string nextPrefix = VoicePerformance.Prefix(remaining);
+                if (nextPrefix.Length > 0)
+                {
+                    prefix = nextPrefix;
+                    remaining = VoicePerformance.StripCue(remaining).TrimStart();
+                    if (remaining.Length == 0) break;
+                }
                 int limit = chunks.Count == 0 ? 42 : 100;
                 int end = Math.Min(limit, remaining.Length), cut = 0;
                 for (int i = 0; i < end; i++)
@@ -488,7 +668,7 @@ namespace AnnaDesktopPet
                 if (cut == 0) cut = remaining.Length;
                 if (cut < remaining.Length && cut > 0 && Char.IsHighSurrogate(remaining[cut - 1]) && Char.IsLowSurrogate(remaining[cut])) cut--;
                 string part = remaining.Substring(0, cut).Trim();
-                if (part.Length > 0) chunks.Add(part);
+                if (part.Length > 0) chunks.Add(prefix + part);
                 remaining = remaining.Substring(cut).TrimStart();
             }
             return chunks;
@@ -497,7 +677,7 @@ namespace AnnaDesktopPet
         private void ReleaseClonePlayer()
         {
             if (playbackWatchdog != null) { playbackWatchdog.Stop(); playbackWatchdog = null; }
-            MediaPlayer player = clonePlayer; clonePlayer = null;
+            MediaPlayer player = clonePlayer; clonePlayer = null; mouthLevels = null;
             if (player != null) { try { player.Stop(); player.Close(); } catch { } }
             string file = cloneWaveFile; cloneWaveFile = null; DeleteWave(file);
         }
@@ -551,7 +731,7 @@ namespace AnnaDesktopPet
             if (handler != null) handler(value);
         }
 
-        private void SetWindowsStatus(string value) { if (!UsingWave) SetStatus(value); }
+        private void SetWindowsStatus(string value) { if (!UsingClone) SetStatus(value); }
 
         private void Dispatch(Action action)
         {

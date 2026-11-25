@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -91,7 +91,7 @@ namespace AnnaDesktopPet
                         stream.Push(Delta(reply));
                         stream.Complete(Completed(reply));
                         await send;
-                        Check(Visible(fixture.Chat).Contains("今天聊点什么？"), "Chat displayed its Chinese reply");
+                        await Until(delegate { return Visible(fixture.Chat).Contains("今天聊点什么？"); }, "Chat displayed its Chinese reply");
                         await WaitForPackagedWave(speech, wave);
                     }
                 }
@@ -344,7 +344,7 @@ namespace AnnaDesktopPet
                 Task send = fixture.Chat.SubmitAsync("这条用停止按钮打断");
                 stream.Push(Delta("按钮停止前的部分文字"));
                 await Until(delegate { return Visible(fixture.Chat).Contains("按钮停止前的部分文字"); }, "Plain text streams before stop");
-                Button stop = FindButton(fixture.Chat, "停止");
+                Button stop = FindButton(fixture.Chat, "停止回复和朗读");
                 Check(stop != null, "Actual chat has a stop button");
                 int stopsBefore = fixture.Speech.Stops;
                 stop.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -630,10 +630,11 @@ namespace AnnaDesktopPet
             }
             return result.ToString();
         }
+        private static int CountRole(IEnumerable<ChatMessage> history, string role) { int count = 0; foreach (ChatMessage item in history) if (item.Role == role) count++; return count; }
         private static Button FindButton(DependencyObject node, string label)
         {
             var button = node as Button;
-            if (button != null && Convert.ToString(button.Content) == label) return button;
+            if (button != null && (Convert.ToString(button.Content) == label || System.Windows.Automation.AutomationProperties.GetName(button) == label)) return button;
             foreach (object child in LogicalTreeHelper.GetChildren(node))
             {
                 var dependency = child as DependencyObject;
@@ -641,7 +642,7 @@ namespace AnnaDesktopPet
             }
             return null;
         }
-        private static int CountRole(IEnumerable<ChatMessage> history, string role) { int count = 0; foreach (ChatMessage item in history) if (item.Role == role) count++; return count; }
+
         private static async Task Until(Func<bool> condition, string message)
         {
             DateTime until = DateTime.UtcNow.AddSeconds(4);

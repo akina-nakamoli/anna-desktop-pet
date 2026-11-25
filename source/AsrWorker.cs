@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Diagnostics;
 using System.Threading;
@@ -85,6 +85,7 @@ namespace AnnaDesktopPet {
         private bool disposed;
         internal string Status {get;private set;}
         internal AsrWorker(){Status="模型尚未加载";}
+        internal Task ReadyAsync(){return EnsureReady();}
         internal void WarmUp(){if(Program.Smoke)return;Task.Run(async delegate{try{await EnsureReady();}catch(Exception ex){Status=ex.Message;Program.Log("ASR warmup failed: "+ex.Message);}});}
         private async Task EnsureReady(){
             Task task;

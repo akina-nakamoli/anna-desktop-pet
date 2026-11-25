@@ -51,11 +51,104 @@ namespace AnnaDesktopPet
             using(var stream=new MemoryStream())using(var writer=new BinaryWriter(stream))
             {writer.Write(Encoding.ASCII.GetBytes("RIFF"));writer.Write(38);writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));writer.Write(16);writer.Write((short)1);writer.Write((short)1);writer.Write(24000);writer.Write(48000);writer.Write((short)2);writer.Write((short)16);writer.Write(Encoding.ASCII.GetBytes("data"));writer.Write(2);writer.Write((short)0);return stream.ToArray();}
         }
-        [STAThread]private static int Main()
+        private static byte[] LevelWave(int sampleRate, int channels, params double[] amplitudes)
         {
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream))
+            {
+                int totalFrames = amplitudes.Length * sampleRate / 50;
+                int dataSize = totalFrames * channels * 2;
+                writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(36 + dataSize);
+                writer.Write(Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16);
+                writer.Write((short)1); writer.Write((short)channels); writer.Write(sampleRate);
+                writer.Write(sampleRate * channels * 2); writer.Write((short)(channels * 2)); writer.Write((short)16);
+                writer.Write(Encoding.ASCII.GetBytes("data")); writer.Write(dataSize);
+                for (int i = 0; i < amplitudes.Length; i++)
+                    for (int sample = i * sampleRate / 50; sample < (i + 1) * sampleRate / 50; sample++)
+                        for (int channel = 0; channel < channels; channel++)
+                            writer.Write((short)(amplitudes[i] * 32767 * ((sample + channel) % 2 == 0 ? 1 : -1)));
+                return stream.ToArray();
+            }
+        }
+
+        private static void VerifyMouthWindows()
+        {
+            byte[] wave = LevelWave(11025, 2, 0, .004, .034, .035, .18, .21, 0, .034, 0, 0);
+            float[] levels = SpeechService.ReadMouthLevels(wave);
+            float[] expected = { 0, 0, .5f, .5f, 1, 1, 0, .5f, 0, 0 };
+            Check(levels != null && levels.Length == expected.Length, "20 ms indexing supports fractional sample counts");
+            for (int i = 0; i < expected.Length; i++)
+                Check(levels[i] == expected[i], "stereo energy and 20 ms pause, window " + i);
+
+            double[] nearBoundary = { .22, .056, .055, .056, .055, .056, .055, .035, .032, .019, .015, .016, .007 };
+            levels = SpeechService.ReadMouthLevels(LevelWave(22050, 1, nearBoundary));
+            for (int i = 0; i < 7; i++) Check(levels[i] == 1, "open mouth stays steady around upper entry threshold");
+            Check(levels[8] == .5f && levels[11] == .5f && levels[12] == 0, "half mouth holds through weak syllable, then closes");
+            float[] muted = SpeechService.MouthLevelsAtVolume(wave, 0);
+            Check(Array.TrueForAll(muted, value => value == 0), "muted output closes all windows");
+            float[] quiet = SpeechService.MouthLevelsAtVolume(wave, 20);
+            Check(quiet[3] == 0 && quiet[5] == .5f, "lower playback gain is applied before the thresholds");
+            Check(SpeechService.ReadMouthLevels(null) == null && SpeechService.ReadMouthLevels(new byte[6]) == null, "invalid clips have no mouth timeline");
+            long onset, end;
+            byte[] phrase = LevelWave(24000,2,0,0,.20,0,.20,0);
+            levels = SpeechService.MouthLevelsAtVolume(phrase,100,out onset,out end);
+            long window = TimeSpan.TicksPerSecond/50;
+            Check(onset == 2*window && end == 5*window, "PCM voice boundaries use stereo sample times");
+            Check(!PortraitPlayback.FromWave(true,false,onset, onset,levels,end).Audible &&
+                !PortraitPlayback.FromWave(true,true,onset-1, onset,levels,end).Audible,
+                "queued audio and the leading silence cannot start a speaking motion");
+            var first = PortraitPlayback.FromWave(true,true,onset,onset,levels,end);
+            var pause = PortraitPlayback.FromWave(true,true,3*window,onset,levels,end);
+            Check(first.Audible && first.Mouth == 1 && pause.Audible && pause.Mouth == 0,
+                "actual sound starts the motion and a pause closes only the lips");
+            Check(!PortraitPlayback.FromWave(true,true,end,onset,levels,end).Audible,
+                "trailing silence ends the phrase even while the player is open");
+            SpeechService.MouthLevelsAtVolume(phrase,0,out onset,out end);
+            Check(onset == -1 && !PortraitPlayback.FromWave(true,true,2*window,onset,levels,end).Audible,
+                "a muted player never starts the speaking motion");
+        }
+
+        private static void VerifyWindowsPcm()
+        {
+            using (var service = new SpeechService(Dispatcher.CurrentDispatcher))
+            {
+                if (!service.Available)
+                {
+                    Console.WriteLine("SKIP real Japanese SAPI: no usable installed Japanese voice");
+                    return;
+                }
+                string name = service.Voices[0].Name;
+                using (var cancel = new CancellationTokenSource())
+                {
+                    Task<byte[]> old = SpeechService.GenerateWindowsWave(name, 0, new string('あ', 100), cancel.Token);
+                    cancel.Cancel();
+                    Task<byte[]> fresh = SpeechService.GenerateWindowsWave(name, 0, "こんにちは、杏菜だよ。", CancellationToken.None);
+                    Wait(delegate { return old.IsCompleted && fresh.IsCompleted; }, "cancelled and replacement Windows PCM workers settle");
+                    Check(old.IsCanceled, "cancelled Windows PCM worker cannot play a stale phrase");
+                    float[] levels = SpeechService.ReadMouthLevels(fresh.GetAwaiter().GetResult());
+                    Check(levels != null && Array.IndexOf(levels, 0f) >= 0 && Array.IndexOf(levels, .5f) >= 0 && Array.IndexOf(levels, 1f) >= 0,
+                        "real Japanese Windows voice produces all three mouth shapes from PCM");
+                    Console.WriteLine("PASS real Japanese Windows voice PCM: " + name + ", " + levels.Length + " energy windows");
+                }
+                // No speakers: cancel before playback dispatch. Both paths must immediately release their identity.
+                service.Speak("これは取り消します。");
+                Check(service.IsBusy && !service.IsSpeaking && service.MouthOpen == 0, "Windows synthesis waits for playback before opening the mouth");
+                service.Stop();
+                Check(!service.IsBusy && !service.IsSpeaking && service.MouthOpen == 0, "stop closes the normal Windows voice synchronously");
+                service.BeginStream(); service.AppendStream("最初の文です。"); service.CompleteStream(); service.Stop();
+                Check(!service.IsBusy && service.MouthOpen == 0, "stop also clears streaming Windows synthesis");
+            }
+        }
+
+        [STAThread]private static int Main()
+        {            var emotional = SpeechService.SplitSpeech("[calm]そうなんだ。[happy]よかったね！");
+            Check(emotional.Count == 2 && emotional[0] == "[calm]そうなんだ。" && emotional[1] == "[happy]よかったね！",
+                "Emotion can change at a sentence boundary without stacked control labels");
             string temp=Path.Combine(Path.GetTempPath(),"Anna-stream-speech-test-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temp);
             try
             {
+                VerifyMouthWindows();
+                VerifyWindowsPcm();
                 string reference=Path.Combine(temp,"reference.wav"),output=Path.Combine(temp,"output.wav");File.WriteAllBytes(reference,Wave());
                 var handler=new Handler();
                 using(var service=new SpeechService(Dispatcher.CurrentDispatcher,output,new GptSovitsClient(handler)))

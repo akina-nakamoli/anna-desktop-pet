@@ -26,6 +26,7 @@ namespace AnnaDesktopPet {
         private volatile bool stopping,disposed;
         private double level;
         internal double Level {get{lock(gate)return level;}}
+        internal byte[] TakePcm() { lock(gate) { byte[] data=pcm.ToArray(); pcm.SetLength(0); return data; } }
         internal static string[] Devices(){var names=new List<string>{"系统默认麦克风"};for(uint i=0;i<waveInGetNumDevs();i++){Caps c;if(waveInGetDevCaps(new UIntPtr(i),out c,(uint)Marshal.SizeOf(typeof(Caps)))==0)names.Add(i+" · "+c.Name);}return names.ToArray();}
         private static void Check(uint code){if(code!=0)throw new IOException("麦克风操作失败（"+code+"），请检查设备及麦克风权限。");}
         internal Microphone(){callback=OnData;}
